@@ -28,7 +28,6 @@
 "use strict";
 ////////////////////
 
-
 //ParallelArray
 //    The constructor for ParallelArrays
 
@@ -112,9 +111,9 @@ var ParallelArray = function () {
     
     // check whether the new extension is installed.
     var useFF4Interface = false;
-    if (Components.interfaces.dpoIInterface !== undefined) {
-        useFF4Interface = true;
-    }
+    //if (Components.interfaces.dpoIInterface !== undefined) {
+    //useFF4Interface = true;
+    //}
     // check whether the OpenCL implementation supports double
     var enable64BitFloatingPoint = false;
     if (useFF4Interface) { 
@@ -159,7 +158,7 @@ var ParallelArray = function () {
     var fingerprint = 0;
     var fingerprintTracker = [];
 
-    const Constants = {
+    var Constants = {
         // Some constants, when constants are added to JS adjust accordingly 
         "zeroStrideConstant"    : [ ],
         "oneStrideConstant"     : [1],
@@ -262,7 +261,7 @@ var ParallelArray = function () {
     var isTypedArray = function lazyLoad(arg) {
         isTypedArray = RiverTrail.Helper.isTypedArray;
         return isTypedArray(arg);
-    }
+    };
 
     var equalsShape = function equalsShape (shapeA, shapeB) {
         return ((shapeA.length == shapeB.length) &&
@@ -400,7 +399,7 @@ var ParallelArray = function () {
         return this;
     };
     // Helper for constructor that takes a single element, an array, a typed array, a 
-    // ParallelArray, or an image of values. The optional second argument unfluences which
+    // ParallelArray, or an image of values. The optional second argument influences which
     // kind of typed array is tried. 
     var createSimpleParallelArray = function createSimpleParallelArray(values, targetType) {
         if (values instanceof Array) {
@@ -883,7 +882,7 @@ var ParallelArray = function () {
         if (arguments.length == 1) { // Just a 1 arg function.
             paResult = RiverTrail.compiler.compileAndGo(this, f, "map", 1, args, enable64BitFloatingPoint);
         } else {            
-            for (j=1;j<arguments.length;j++) {
+            for (var j=1;j<arguments.length;j++) {
                 args[j-1] = arguments[j];                    
             }
             paResult = RiverTrail.compiler.compileAndGo(this, f, "map", 1, args, enable64BitFloatingPoint); 
@@ -1689,7 +1688,7 @@ var ParallelArray = function () {
         }
         Fast1DPA.prototype = {
             "get" : function fastGet1D (index) {
-                const aLen = arguments.length;
+                var aLen = arguments.length;
                 if (aLen === 1) {
                     if (typeof(index) === "number") {
                         return this.data[this.offset + index];
@@ -1727,7 +1726,7 @@ var ParallelArray = function () {
         Fast2DPA.prototype = {
             "get" : function fastGet2D (index, index2) {
                 var result;
-                const aLen = arguments.length;
+                var aLen = arguments.length;
                 if (aLen === 2) {
                     return this.data[this.offset + index * this.strides[0] + index2];
                 } else if (aLen === 1) {
@@ -1772,7 +1771,7 @@ var ParallelArray = function () {
         Fast3DPA.prototype = {
             "get" : function fastGet3D (index, index2, index3) {
                 var result;
-                const aLen = arguments.length;
+                var aLen = arguments.length;
                 if (aLen === 3) {
                         return this.data[this.offset + index * this.strides[0] + index2 * this.strides[1] + index3];
                 } else if (aLen === 2) {
@@ -1933,3 +1932,14 @@ low_precision.wrapper = function (f) {
 low_precision.wrapper.prototype = {
     "unwrap" : function () { return this.wrappedFun; }
 };
+
+global.ParallelArray = ParallelArray;
+global.low_precision = low_precision;
+
+require('./jit/RiverTrail');
+
+//global.ParallelArray = undefined;
+//global.low_precision = undefined;
+
+exports.low_precision = low_precision;
+exports.ParallelArray = ParallelArray;

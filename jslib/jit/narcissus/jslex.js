@@ -48,7 +48,7 @@
  * Lexical scanner.
  */
 
-Narcissus.lexer = (function() {
+exports.lexer = Narcissus.lexer = (function() {
 
     var definitions = Narcissus.definitions;
 

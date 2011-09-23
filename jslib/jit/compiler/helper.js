@@ -28,10 +28,10 @@
 "use strict";
 
 if (RiverTrail === undefined) {
-    var RiverTrail = {};
+    //var RiverTrail = {};
 }
 
-RiverTrail.Helper = function () {
+exports.Helper = RiverTrail.Helper = function () {
     var nodeNames = ["children", "body", "setup", "condition", "update", "thenPart", "elsePart", "expression", "initializer"];
 
     function traverseAst (ast, f, env) {
@@ -71,7 +71,7 @@ RiverTrail.Helper = function () {
     var arrayTypeToCType = [
         [Int8Array, "signed char"],
         [Uint8Array, "unsigned char"],
-        [Uint8ClampedArray, "unsigned /* clamped */ char"],
+//        [Uint8ClampedArray, "unsigned /* clamped */ char"],
         [Int16Array, "short"],
         [Uint16Array, "unsigend short"],
         [Int32Array, "int"],
@@ -131,7 +131,7 @@ RiverTrail.Helper = function () {
     }; 
 
     function stripToBaseType(s) {
-        const regExp = /[a-zA-Z]*/;
+        var regExp = /[a-zA-Z]*/;
         var match = s.match(regExp);
         if (match.length === 1) {
             return match[0];

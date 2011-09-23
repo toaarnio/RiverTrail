@@ -61,7 +61,7 @@
     Narcissus = narcissus;
 })();
 
-Narcissus.definitions = (function() {
+exports.definitions = Narcissus.definitions = (function() {
 
     var tokens = [
         // End of source.

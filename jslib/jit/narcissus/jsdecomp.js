@@ -41,7 +41,7 @@
  * Decompiler and pretty-printer.
  */
 
-Narcissus.decompiler = (function() {
+exports.decompiler = Narcissus.decompiler = (function() {
 
     const parser = Narcissus.parser;
     const definitions = Narcissus.definitions;

@@ -49,7 +49,7 @@
  * Parser.
  */
 
-Narcissus.parser = (function() {
+exports.parser = Narcissus.parser = (function() {
 
     var lexer = Narcissus.lexer;
     var definitions = Narcissus.definitions;

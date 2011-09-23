@@ -35,10 +35,12 @@
 // returns only the external needed outside of the function.
 
 if (RiverTrail === undefined) {
-    var RiverTrail = {};
+    //var RiverTrail = {};
 }
 
-RiverTrail.compiler = (function () {
+var DPOInterface = require('../DPOInterface').DPOInterface;
+
+exports.compiler = RiverTrail.compiler = (function () {
     // This is the compiler driver proper. 
     
     // The ast is opaque at this point so the Narcissus constants aren't needed.
@@ -49,7 +51,7 @@ RiverTrail.compiler = (function () {
     // whether to cache OpenCL buffers
     var useBufferCaching = true;
 
-    const suppressOpenCL = false;
+    var suppressOpenCL = false;
 
     var openCLContext; 
     var dpoInterface; 
@@ -83,7 +85,7 @@ RiverTrail.compiler = (function () {
         } else {
             lowPrecision = !enable64BitFloatingPoint;
         }
-        const defaultNumberType = lowPrecision ? "float": "double";
+        var defaultNumberType = lowPrecision ? "float": "double";
 
         // First convert all arguments to ParallelArray representation. As we need to have shape and type
         // information anyhow, this has little overhead to only converting the data to a typed array.
@@ -100,6 +102,7 @@ RiverTrail.compiler = (function () {
                                          } else if (RiverTrail.Helper.isTypedArray(object)) {
                                              var result = new ParallelArray( object);
                                              result._wasArray = true;
+					     return result;
                                          } else {
                                              return object;
                                          }});
@@ -168,7 +171,7 @@ RiverTrail.compiler = (function () {
     function parse(paSource, construct, rankOrShape, kernel, args, lowPrecision) {
         var parser = Narcissus.parser;
         var kernelJS = kernel.toString();
-        var ast = parser.parse(kernelJS);        
+        var ast = parser.parse(kernelJS);
         var rank = rankOrShape.length || rankOrShape;
         try {
             RiverTrail.Typeinference.analyze(ast.children[0], paSource, construct, rank, args, lowPrecision);

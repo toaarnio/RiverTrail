@@ -25,7 +25,7 @@
  *
  */
 
-RiverTrail.RangeAnalysis = function () {
+exports.RangeAnalysis = RiverTrail.RangeAnalysis = function () {
     var definitions = Narcissus.definitions;
     eval(definitions.consts);
     eval(RiverTrail.definitions.consts);

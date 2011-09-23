@@ -44,10 +44,10 @@
 //
 
 if (RiverTrail === undefined) {
-    var RiverTrail = {};
+    //var RiverTrail = {};
 }
 
-RiverTrail.compiler.codeGen = (function() {
+exports.codeGen = RiverTrail.compiler.codeGen = (function() {
     const verboseDebug = false;
     const checkBounds = true;
     const parser = Narcissus.parser;
@@ -403,6 +403,7 @@ RiverTrail.compiler.codeGen = (function() {
         s = s + oclStatements(funDecl.body);
         // add the epilog.       
         s = s + "}";
+console.log(s);
         return s;
     };
 

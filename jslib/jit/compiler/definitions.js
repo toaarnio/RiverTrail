@@ -26,10 +26,12 @@
  */
 
 if (RiverTrail === undefined) {
-    var RiverTrail = {};
+    //var RiverTrail = {};
 }
 
-RiverTrail.definitions = function () {
+require('../Narcissus');
+
+exports.definitions = RiverTrail.definitions = function () {
     var tokens= [ "CAST", "TOINT32" ];
     const offset = Narcissus.definitions.tokens.length;
 

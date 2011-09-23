@@ -27,7 +27,7 @@
 
 
 if (RiverTrail === undefined) {
-    var RiverTrail = {};
+    //var RiverTrail = {};
 }
 
 // Executes the kernel function with the ParallelArray this and the args for the elemental function
@@ -39,7 +39,7 @@ if (RiverTrail === undefined) {
 // rankOrShape  - either the rank of the iteration space, or for comprehension the shape of the interationspace
 // actualArgs   - extra kernel arguments
 
-RiverTrail.compiler.runOCL = function () {
+exports.runOCL = RiverTrail.compiler.runOCL = function () {
 
     // Executes the kernel function with the ParallelArray this and the args for the elemental function
     // paSource     - 'this' inside the kernel

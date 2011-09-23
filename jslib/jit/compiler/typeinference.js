@@ -29,7 +29,11 @@
 // Type inference phase
 //
 
-RiverTrail.Typeinference = function () {
+if (RiverTrail === undefined) {
+    //var RiverTrail = {};
+}
+
+exports.Typeinference = RiverTrail.Typeinference = function () {
     var definitions = Narcissus.definitions;
     eval(definitions.consts);
     eval(RiverTrail.definitions.consts);

@@ -29,7 +29,11 @@
 // Graphviz dot visualizer for Narzissus tree
 //
 
-RiverTrail.dotviz = function () {
+if (RiverTrail === undefined) {
+    //var RiverTrail = {};
+}
+
+exports.dotviz = RiverTrail.dotviz = function () {
     var dotCnt = 0;
 
     var tokens = RiverTrail.definitions.tokens;

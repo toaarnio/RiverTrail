@@ -634,12 +634,11 @@ exports.RangeAnalysis = RiverTrail.RangeAnalysis = function () {
 
             // literals
             case IDENTIFIER:
+            case THIS:
                 if (constraintAccu && constraints) { // we have a new constraint here, so add it to constraints
                     constraints.addAccu(ast.value, constraintAccu);
                 }
                 result = varEnv.lookup(ast.value) || new Range(undefined, undefined, false);
-                break;
-            case THIS:
                 break;
             case DOT:
                 // we support array.length and PA.getShape() as it is somewhat a common loop bound. Could be more elaborate
@@ -810,6 +809,9 @@ exports.RangeAnalysis = RiverTrail.RangeAnalysis = function () {
             env.update(ast.params[0], range);
         } else if (construct === "comprehension") {
             var range = rankOrShape.map(function (val) { return new Range(0, val - 1, true); });
+            env.update(ast.params[0], range);
+        } else if (construct === "comprehensionScalar") {
+            var range = new Range(0, rankOrShape[0] - 1, true);
             env.update(ast.params[0], range);
         }
 
@@ -1026,6 +1028,7 @@ exports.RangeAnalysis = RiverTrail.RangeAnalysis = function () {
 
             // literals
             case IDENTIFIER:
+            case THIS:
                 ast.typeInfo = tEnv.lookup(ast.value).type;
                 // if the variable is a float but this expression is known to be 
                 // an int, we have to put a cast here
@@ -1034,7 +1037,6 @@ exports.RangeAnalysis = RiverTrail.RangeAnalysis = function () {
                     ast.rangeInfo = ast.children[0].rangeInfo; // inherit range info
                 }
                 break;
-            case THIS:
                 break;
             case DOT:
                 ast.children[0] = push(ast.children[0], tEnv, undefined);

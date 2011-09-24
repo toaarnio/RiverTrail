@@ -25,6 +25,8 @@
  *
  */
 
+var WebCL = require('webcl');
+
 "use strict";
 ////////////////////
 
@@ -114,25 +116,17 @@ var ParallelArray = function () {
 
     
     // check whether the new extension is installed.
-    var useFF4Interface = false;
-    //if (Components.interfaces.dpoIInterface !== undefined) {
-    //useFF4Interface = true;
-    //}
+    var useWebCL = false;
+    if (WebCL !== undefined) {
+        useWebCL = true;
+    }
     // check whether the OpenCL implementation supports double
     var enable64BitFloatingPoint = false;
-    if (useFF4Interface) { 
-        var dpoI; 
-        var dpoP; 
+    if (useWebCL) {
         try {
-            dpoI = new DPOInterface();
-        } catch (e) {
-            console.log("Unable to create new DPOInterface(): "+e);
-            throw e;
-        }
-
-        try {
-            dpoP = dpoI.getPlatform();
-            enable64BitFloatingPoint = (dpoP.extensions.indexOf("cl_khr_fp64") !== -1);
+            var platforms = WebCL.getPlatformIDs();
+            var extensions = platforms[0].getPlatformInfo(WebCL.CL_PLATFORM_EXTENSIONS);
+            enable64BitFloatingPoint = (extensions.indexOf("cl_khr_fp64") !== -1);
         } catch (e) {
             console.log("Unable to find OpenCL platform: "+e);
             console.log("enable64BitFloatingPoint has been disabled");
@@ -143,7 +137,7 @@ var ParallelArray = function () {
     // this is the storage that is used by default when converting arrays 
     // to typed arrays.
     var defaultTypedArrayConstructor 
-    = useFF4Interface ? (enable64BitFloatingPoint ? Float64Array : Float32Array)
+    = useWebCL ? (enable64BitFloatingPoint ? Float64Array : Float32Array)
                     : Array;
     // the default type assigned to JavaScript numbers
     var defaultNumberType = enable64BitFloatingPoint ? "double" : "float";
@@ -199,7 +193,7 @@ var ParallelArray = function () {
     // If this.data is a OpenCL memory object, grab the values and store the OpenCL memory 
     // object in the cache for later use.
     var materialize = function materialize() {
-        if (useFF4Interface && (this.data instanceof Components.interfaces.dpoIData)) {
+        if (useWebCL && (this.data instanceof WebCL.MemoryObject)) {
             // we have to first materialise the values on the JavaScript side
             this.cachedOpenCLMem = this.data;
             this.data = this.cachedOpenCLMem.getValue();
@@ -1057,7 +1051,7 @@ var ParallelArray = function () {
                 privateThis = this.get(1);
                 callArguments[0] = rawResult[0];
                 rawResult[1] = f.apply(privateThis, callArguments);
-                if ((rawResult[1].data instanceof Components.interfaces.dpoIData) && 
+                if ((rawResult[1].data instanceof WebCL.MemoryObject) &&
                     equalsShape(rawResult[0].getShape(), rawResult[1].getShape())) {
                     // this was computed by openCL and the function is shape preserving.
                     // Try to preallocate and compute the result in place!
@@ -1388,7 +1382,7 @@ var ParallelArray = function () {
             var currImage = context.getImageData(0, 0, canvas.width, canvas.height);
             var imageData = context.createImageData(currImage.width, currImage.height);
             var data = imageData.data;
-            if (useFF4Interface && (this.data instanceof Components.interfaces.dpoIData)) {
+            if (useWebCL && (this.data instanceof WebCL.MemoryObject)) {
                 this.data.writeTo(data);
             } else {
                 for (var i = 0; i < this.data.length; i++) {
@@ -1551,7 +1545,7 @@ var ParallelArray = function () {
     
     // toString()   Converts an array to a string, and returns the result
     var toString = function toString (arg1) {
-        if (useFF4Interface && isTypedArray(this.data)) {
+        if (useWebCL && isTypedArray(this.data)) {
             return Array.prototype.reduce.call(this.data, function (res, element) { return res + " " + element; }, "[") + " ]";
         }
         return this.data.toString();
@@ -1826,7 +1820,7 @@ var ParallelArray = function () {
         } else if ((arguments.length == 2) && (typeof(arguments[0]) == 'function')) {
             // Special case where we force the type of the result. Should only be used internally
             result = createSimpleParallelArray.call(this, arguments[1], arguments[0]);
-        } else if (useFF4Interface && (arguments[0] instanceof Components.interfaces.dpoIData)) {
+        } else if (useWebCL && arguments[0] instanceof WebCL.MemoryObject) {
             result = createOpenCLMemParallelArray.apply(this, arguments);
         } else if (arguments[1] instanceof Function) {    
             var extraArgs;

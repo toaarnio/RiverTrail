@@ -25,6 +25,7 @@
  *
  */
 
+var WebCL = require('webcl');
 
 if (RiverTrail === undefined) {
     //var RiverTrail = {};
@@ -90,7 +91,7 @@ exports.runOCL = RiverTrail.compiler.runOCL = function () {
         // construct kernel arguments
         var jsObjectToKernelArg = function (args, object) {
             if (object instanceof ParallelArray) {
-                if (object.data instanceof Components.interfaces.dpoIData) {
+                if (object.data instanceof WebCL.MemoryObject) {
                     // we already have an OpenCL value
                     args.push(object.data);
                 } else if (RiverTrail.Helper.isTypedArray(object.data)) {
@@ -151,13 +152,13 @@ exports.runOCL = RiverTrail.compiler.runOCL = function () {
             if (++paSource.updateInPlaceUses !== 1) {
                 throw new CompilerAbort("preallocated memory used more than once!");
             }
-            if (!(paSource.updateInPlacePA.data instanceof Components.interfaces.dpoIData)) {
+            if (!(paSource.updateInPlacePA.data instanceof WebCL.MemoryObject)) {
                 paSource.updateInPlacePA.data = RiverTrail.compiler.openCLContext.mapData(paSource.updateInPlacePA.data);
             }
             resultMemObj = paSource.updateInPlacePA.data;
             resultOffset = paSource.updateInPlaceOffset;
         } else if (paSource.data !== undefined) {
-            if (paSource.data instanceof Components.interfaces.dpoIData) {
+            if (paSource.data instanceof WebCL.MemoryObject) {
                 // SAH: this is a cludge until I figure out how to extract a XPCWrappedNative from a jsval
                 //      in the extension.
                 resultMemObj = RiverTrail.compiler.openCLContext.allocateData2(paSource.data, resSize);
@@ -176,7 +177,7 @@ exports.runOCL = RiverTrail.compiler.runOCL = function () {
         kernelArgs.push(resultMemObj);
         kernelArgs.push(new RiverTrail.Helper.Integer(resultOffset));
         // build kernel
-        if (kernelString instanceof Components.interfaces.dpoIKernel) {
+        if (kernelString instanceof WebCL.KernelObject) {
             kernel = kernelString;
         } else {
             try {
@@ -225,7 +226,7 @@ exports.runOCL = RiverTrail.compiler.runOCL = function () {
                     // console.log("index: ", index, " arg.value: ", arg.value);
                     kernel.setScalarArgument(index, arg.value, true, false);
                     // console.log("good");
-                } else if (arg instanceof Components.interfaces.dpoIData) {
+                } else if (arg instanceof WebCL.MemoryObject) {
                     kernel.setArgument(index, arg);
                 } else {
                     throw new CompilerBug("unexpected kernel argument type!");

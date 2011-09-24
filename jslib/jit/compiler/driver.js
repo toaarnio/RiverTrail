@@ -38,7 +38,7 @@ if (RiverTrail === undefined) {
     //var RiverTrail = {};
 }
 
-var DPOInterface = require('../DPOInterface').DPOInterface;
+var DPOInterface = require('../WebCLWrapper').DPOInterface;
 
 exports.compiler = RiverTrail.compiler = (function () {
     // This is the compiler driver proper. 

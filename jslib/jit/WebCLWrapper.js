@@ -1,6 +1,4 @@
 
-var WebCL = require('webcl');
-
 //
 // Context
 //
@@ -10,31 +8,23 @@ function WebCLContext(context)
     this.ctx = context;
     this.devices = context.getContextInfo(WebCL.CL_CONTEXT_DEVICES);
     this.buildLog = "";
+    this.q = this.ctx.createCommandQueue(this.devices[0], 0);
 }
-
-var makeGetValue = function(dev, ctx, memobj, data) {
-    return function() {
-        var q = ctx.createCommandQueue(dev, 0);
-        q.enqueueReadBuffer(memobj, true, 0, data.byteLength, data, []);
-        return data;
-    };
-};
 
 WebCLContext.prototype.mapData = function(data) {
     var memobj = this.ctx.createBuffer(WebCL.CL_MEM_READ_ONLY, data.byteLength);
-    var dev = this.devices[0];
-    var q = this.ctx.createCommandQueue(dev, 0);
-    q.enqueueWriteBuffer(memobj, true, 0, data.byteLength, data, []);
-    memobj.getValue = makeGetValue(dev, this.ctx, memobj, data);
-    return memobj;
+    this.q.enqueueWriteBuffer(memobj, true, 0, data.byteLength, data, []);
+    return new WebCLMemoryObject(this, memobj, data);
 };
 
 WebCLContext.prototype.allocateData = function(data, length) {
     var elem_size = data.byteLength / data.length;
     var memobj = this.ctx.createBuffer(WebCL.CL_MEM_READ_WRITE, length * elem_size);
-    var dev = this.devices[0];
-    memobj.getValue = makeGetValue(dev, this.ctx, memobj, data);
-    return memobj;
+    return new WebCLMemoryObject(this, memobj, data);
+};
+
+WebCLContext.prototype.allocateData2 = function(data, length) {
+    throw 'allocateData2 not implemented';
 };
 
 WebCLContext.prototype.compileKernel = function(source, name, options) {
@@ -50,7 +40,7 @@ WebCLContext.prototype.compileKernel = function(source, name, options) {
         throw err;
     }
     var kernel = program.createKernel(name);
-    return new WebCLKernel(this.ctx, dev, kernel);
+    return new WebCLKernel(this, kernel);
 };
 
 //
@@ -65,7 +55,7 @@ function WebCLPlatform(platform)
 WebCLPlatform.prototype.createContext = function() {
     var context = WebCL.createContextFromType([WebCL.CL_CONTEXT_PLATFORM,
                                                this.platform],
-                                              WebCL.CL_DEVICE_TYPE_DEFAULT);
+                                              WebCL.CL_DEVICE_TYPE_GPU);
     return new WebCLContext(context);
 };
 
@@ -73,15 +63,14 @@ WebCLPlatform.prototype.createContext = function() {
 // Kernel
 // 
 
-function WebCLKernel(context, device, kernel)
+function WebCLKernel(context, kernel)
 {
-    this.kernel = kernel;
-    this.dev = device;
     this.ctx = context;
+    this.kernel = kernel;
 }
 
 WebCLKernel.prototype.setArgument = function(index, memobj) {
-    this.kernel.setKernelArg(index, memobj, WebCL.types.MEM);
+    this.kernel.setKernelArg(index, memobj.memobj, WebCL.types.MEM);
 };
 
 WebCLKernel.prototype.setScalarArgument = function(index, arg, isInteger, highPrecision) {
@@ -91,9 +80,26 @@ WebCLKernel.prototype.setScalarArgument = function(index, arg, isInteger, highPr
 };
 
 WebCLKernel.prototype.run = function(rank, shape, tile) {
-    var q = this.ctx.createCommandQueue(this.dev, 0);
-    q.enqueueNDRangeKernel(this.kernel, rank, [], shape, [], []);
-    q.finish();
+    this.ctx.q.enqueueNDRangeKernel(this.kernel, rank, [], shape, [], []);
+    this.ctx.q.finish();
+};
+
+//
+// MemoryObject
+//
+
+function WebCLMemoryObject(context, memory_object, data)
+{
+    this.ctx = context;
+    this.memobj = memory_object;
+    this.data = data;
+}
+
+WebCLMemoryObject.prototype.getValue = function() {
+    this.ctx.q.enqueueReadBuffer(this.memobj, true, 0, this.data.byteLength, this.data, []);
+    this.memobj.releaseCLResources();
+    this.memobj = undefined;
+    return this.data;
 };
 
 //
@@ -108,6 +114,3 @@ WebCLWrapper.prototype.getPlatform = function() {
     var platforms = WebCL.getPlatformIDs();
     return new WebCLPlatform(platforms[0]);
 };
-
-
-exports.DPOInterface = WebCLWrapper;

@@ -52,12 +52,10 @@ RiverTrail.compiler = (function () {
     const suppressOpenCL = false;
 
     var openCLContext; 
-    var dpoInterface; 
-    var dpoPlatform;
     try {
-        dpoInterface = new DPOInterface();
-        dpoPlatform = dpoInterface.getPlatform(); 
-        openCLContext = dpoPlatform.createContext();
+        var webcl = new WebCLWrapper();
+        var platform = webcl.getPlatform();
+        openCLContext = platform.createContext();
     } catch (e) {
         console.log ("Cannot initialise OpenCL interface. Please check the extension's options and try again.");
         throw Error("Cannot initialise OpenCL Interface: " + JSON.stringify(e));
@@ -100,6 +98,7 @@ RiverTrail.compiler = (function () {
                                          } else if (RiverTrail.Helper.isTypedArray(object)) {
                                              var result = new ParallelArray( object);
                                              result._wasArray = true;
+                                             return result;
                                          } else {
                                              return object;
                                          }});
@@ -115,6 +114,7 @@ RiverTrail.compiler = (function () {
                                       construct, rankOrShape, args, argumentTypes, lowPrecision, 
                                       enable64BitFloatingPoint, useBufferCaching, useKernelCaching);
                     return paResult;
+
                 }
             } else {
                 // remove cache 

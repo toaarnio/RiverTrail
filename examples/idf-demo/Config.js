@@ -73,9 +73,9 @@ var display_linebreak = false;
 var keynote_titles_fontsize = "60px";              // must be in unit px or pt 
 var keynote_fps_fontsize = "60px";
 
-var keynote_sequential_name = "Sequential";
+var keynote_sequential_name = "JavaScript";
 var keynote_sequential_name_line_2 = "<br/>";       // to leave line 2 blank, use <br/> to fill the empty space
-var keynote_paralell_name = "River Trail";
+var keynote_paralell_name = "WebCL";
 var keynote_paralell_name_line_2 = "<br/>";
 var keynote_camera_mouse_power = 1;                 // good setting is 1 because of auto camera movement
 

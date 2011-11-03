@@ -45,7 +45,7 @@ var showfloor_titles_fontsize = "50px";             // set to 0px to hide titles
 var showfloor_fps_fontsize = "50px";
 
 // demo settings
-var showfloor_default_particle_count = 4000;
+var showfloor_default_particle_count = 1000;
 
 // camera control
 var demo_camera_mouse_power = 3;                    // good setting is 3 
@@ -81,7 +81,7 @@ var keynote_camera_mouse_power = 1;                 // good setting is 1 because
 
 
 var keynote_default_implementation = "parallel";    // options are parallel or sequential
-var keynote_particle_count = 4000;
+var keynote_particle_count = 1000;
 
 
 var keynote_camera_speed = .005;                    // good value is .001

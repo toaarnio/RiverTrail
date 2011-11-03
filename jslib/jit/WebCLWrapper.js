@@ -52,10 +52,24 @@ function WebCLPlatform(platform)
   this.platform = platform;
 }
 
+//
+// Try to create a CPU context; if that fails, try the GPU.  The CPU
+// is preferred because the RiverTrail compiler doesn't seem to be
+// producing very GPU-optimized kernels.
+//
 WebCLPlatform.prototype.createContext = function() {
-  var context = WebCL.createContextFromType([WebCL.CL_CONTEXT_PLATFORM,
-                                             this.platform],
-                                            WebCL.CL_DEVICE_TYPE_DEFAULT);
+  var context = null;
+  try {
+    context = WebCL.createContextFromType([WebCL.CL_CONTEXT_PLATFORM,
+                                           this.platform],
+                                          WebCL.CL_DEVICE_TYPE_CPU);
+    console.log("Selected the CPU");
+  } catch (e) {
+    context = WebCL.createContextFromType([WebCL.CL_CONTEXT_PLATFORM,
+                                           this.platform],
+                                          WebCL.CL_DEVICE_TYPE_GPU);
+    console.log("Selected the GPU");
+  }
   return new WebCLContext(context);
 };
 
@@ -116,7 +130,7 @@ WebCLWrapper.prototype.getPlatform = function() {
   // best on the Intel OpenCL SDK. NVIDIA OpenCL drivers seem to be
   // the least robust, at least on Windows.
 
-  var platformPreference = [ "Intel", "AMD", "NVIDIA", "" ];
+  var platformPreference = [ "Intel", "AMD", "ATI", "NVIDIA", "" ];
 
   var platforms = WebCL.getPlatforms();
   for (var i=0, found=false; i < platformPreference.length && !found; i++) {

@@ -1177,7 +1177,6 @@ var ParallelArray = function () {
   };
   
   
-
   /***
       scatter
       Arguments
@@ -1235,7 +1234,7 @@ var ParallelArray = function () {
     var rawResult = new Array(newLen);
     var conflictResult = new Array(newLen);
     var i;
-    
+
     if (hasDefault) {
       for (i = 0; i < len; i++) {
         rawResult[i] = defaultValue;

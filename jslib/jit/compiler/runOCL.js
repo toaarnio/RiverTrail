@@ -62,7 +62,7 @@ RiverTrail.compiler.runOCL = function () {
         var rank;
         var resShape;
         var resSize;
-        var kernelName = getKernelName(ast);
+        var kernelName = ast.name;
         if (!kernelName) {
             throw new CompilerBug("Invalid ast: Function expected at top level");
         }
@@ -72,7 +72,7 @@ RiverTrail.compiler.runOCL = function () {
             sourceType = undefined;
             iterSpace = rankOrShape;
             rank = iterSpace.length;
-            resultElemType = RiverTrail.Helper.stripToBaseType(ast.children[0].typeInfo.result.OpenCLType);
+            resultElemType = RiverTrail.Helper.stripToBaseType(ast.typeInfo.result.OpenCLType);
         } else {
             sourceType = RiverTrail.Helper.inferPAType(paSource);
             resultElemType = sourceType.inferredType;
@@ -80,8 +80,8 @@ RiverTrail.compiler.runOCL = function () {
             iterSpace = sourceType.dimSize.slice(0, rank);
         }
 
-        if (ast.children[0].typeInfo.result.properties) {
-            resShape = iterSpace.concat(ast.children[0].typeInfo.result.properties.shape);
+        if (ast.typeInfo.result.properties) {
+            resShape = iterSpace.concat(ast.typeInfo.result.properties.shape);
         } else {
             resShape = iterSpace;
         }
@@ -125,6 +125,9 @@ RiverTrail.compiler.runOCL = function () {
                 console.log("(object instanceof RiverTrail.Helper.Integer) encountered unexpectedly");
                 // Integers are passed directly
                 args.push(object);
+            } else if (RiverTrail.Helper.isTypedArray(object)) {
+                // map the typed array
+                args.push(RiverTrail.compiler.openCLContext.mapData(object));
             } else {
                 throw new CompilerError("only typed arrays and scalars are currently supported as OpenCL kernel arguments");
             }
@@ -196,7 +199,7 @@ RiverTrail.compiler.runOCL = function () {
                 if (useKernelCaching && (f !== undefined)) {
                     // save ast information required for future use
                     var cacheEntry = { "ast": ast,
-                        "name": ast.children[0].name,
+                        "name": ast.name,
                         "source": f,
                         "paType": sourceType,
                         "kernel": kernel,
@@ -243,10 +246,14 @@ RiverTrail.compiler.runOCL = function () {
             try {
                 // console.log("791:new:rank: "+rank+" iterSpace: "+iterSpace);
                 //console.log("driver:389 did not run.");
-                kernel.run(rank, iterSpace, iterSpace.map(function () { return 1; }));
+                var kernelFailure = kernel.run(rank, iterSpace, iterSpace.map(function () { return 1; }));
             } catch (e) {
                 console.log("kernel.run fails: ", e);
                 throw e;
+            }
+            if (kernelFailure) {
+                // a more helpful error message would be nice. However, we don't know why it failed. A better exception model is asked for...
+                throw new Error("kernel execution failed, probably due to an array out of bounds access.");
             }
         } else {
             alert("runOCL only deals with comprehensions, map and combine (so far).");
@@ -270,19 +277,6 @@ RiverTrail.compiler.runOCL = function () {
         }
         return result;
     };
-
-    var getKernelName = function (ast) {
-        if (ast) {
-            if (ast.children) {
-                if (ast.children[0].name) {
-                    return ast.children[0].name;
-                }
-            }
-        }
-        throw new CompilerBug("Invalid ast: Function expected at top level");
-    };
-
-
 
     return runOCL;
 } ();

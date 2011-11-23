@@ -100,34 +100,34 @@ RiverTrail.Helper = function () {
         return undefined;
     };
 
+    function inferTypedArrayType(array) {
+        var i;
+        var elementalType;
+        for (i=0;i<arrayTypeToCType.length;i++) {
+            if (array instanceof arrayTypeToCType[i][0]) {
+                elementalType = arrayTypeToCType[i][1];
+                break;
+            }
+        }
+        if (elementalType === undefined) {
+            // SAH: I fail here as we do not know the type of this typed array. If it had
+            //      a homogeneous type, the constructor would have converted it to a 
+            //      typed array.
+            throw new TypeError("Cannot infer type for given Parallel Array data container.");
+        } 
+        return elementalType;
+    };
+
     function inferPAType(pa) {
         var dimSize = pa.getShape();
         var elementalType;
         //
         // if we already have type information, we return it.
         // 
-        if (pa.elementalType !== undefined) {
-            elementalType = pa.elementalType;
-        } else {
-            var ta = pa.data; // Grab the typed array and deduce its equivelant C type. We do not need to
-                              // materialize it here as for unmaterialized arrays the elementalType will be set!
-            var i;
-            for (i=0;i<arrayTypeToCType.length;i++) {
-                if (ta instanceof arrayTypeToCType[i][0]) {
-                    elementalType = arrayTypeToCType[i][1];
-                    break;
-                }
-            }
-            if (elementalType === undefined) {
-                // SAH: I fail here as we do not know the type of this typed array. If it had
-                //      a homogeneous type, the constructor would have converted it to a 
-                //      typed array.
-                throw new TypeError("Cannot infer type for given Parallel Array data container.");
-            } 
-            // cache type information for next time
-            pa.elementalType = elementalType;
+        if (pa.elementalType === undefined) {
+            pa.elementalType = inferTypedArrayType(pa.data);
         }
-        return {"dimSize": dimSize, "inferredType" : elementalType};
+        return {"dimSize": dimSize, "inferredType" : pa.elementalType};
     }; 
 
     function stripToBaseType(s) {
@@ -166,13 +166,50 @@ RiverTrail.Helper = function () {
         }
     }
 
+    // 
+    // helper functions for using the narcissus parser to parse a single function. The are used by the
+    // driver and by type inference for external references.
+    //
+
+    //
+    // Name generator to ensure that function names are unique if we parse
+    // multiple functions with the same name
+    //
+    var nameGen = function () {
+        var counter = 0;
+
+        return function nameGen (postfix) {
+            return "f" + (counter++) + "_" + (postfix || "nameless");
+        };
+    }();
+
+    //
+    // given a string, return a parsed AST
+    //
+    var parseFunction = function (kernel) {
+        var parser = Narcissus.parser;
+        var kernelJS = kernel.toString();
+        // We want to parse a function that was used in expression position
+        // without creating a <script> node around it, nor requiring it to
+        // have a name. So we have to take a side entry into narcissus here.
+        var t = new parser.Tokenizer(kernelJS);
+        t.get(true); // grab the first token
+        var ast = parser.FunctionDefinition(t, undefined, false, parser.EXPRESSED_FORM);        
+        // Ensure that the function has a unique, valid name to simplify
+        // the treatment downstream
+        ast.name = nameGen(ast.name);
+        return ast;
+    };
+
     return { "traverseAst" : traverseAst,
              "wrappedPP" : wrappedPP,
              "inferPAType" : inferPAType,
              "elementalTypeToConstructor" : elementalTypeToConstructor,
              "stripToBaseType" : stripToBaseType,
-             "Integer": Integer,
-             "debugThrow": debugThrow,
-             "isTypedArray": isTypedArray };
+             "Integer" : Integer,
+             "debugThrow" : debugThrow,
+             "isTypedArray" : isTypedArray,
+             "inferTypedArrayType" : inferTypedArrayType,
+             "parseFunction" : parseFunction };
 
 }();

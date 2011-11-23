@@ -57,8 +57,15 @@ RiverTrail.compiler = (function () {
         var platform = webcl.getPlatform();
         openCLContext = platform.createContext();
     } catch (e) {
-        console.log ("Cannot initialise OpenCL interface. Please check the extension's options and try again.");
+        console.log ("Cannot initialise OpenCL interface. Please check the whether the extension was installed and try again.");
         throw Error("Cannot initialise OpenCL Interface: " + JSON.stringify(e));
+    }
+
+    // check whether we have the right version of the extension; as the user has some extension installed, he probably wants to use
+    // the right one for this library, so we alert him
+    if (dpoInterface.version !== 2) {
+        alert("This webpage requires a newer version of the RiverTrail Firefox extension. Please visit http://github.com/rivertrail/rivertrail/downloads.");
+        throw Error("RiverTrail extension out of date");
     }
 
     // main hook to start the compilation/execution process for running a construct using OpenCL
@@ -89,9 +96,7 @@ RiverTrail.compiler = (function () {
 
         args = Array.prototype.map.call(args, 
                                      function (object) {
-                                         if (object instanceof ParallelArray) {
-                                             return object;
-                                         } else if (object instanceof Array) {
+                                         if (object instanceof Array) {
                                              var result = new ParallelArray( lowPrecision ? Float32Array : Float64Array, object);
                                              result._wasArray = true;
                                              return result;
@@ -154,7 +159,7 @@ RiverTrail.compiler = (function () {
                 try {
                     RiverTrail.Helper.debugThrow(e + RiverTrail.compiler.openCLContext.buildLog);
                 } catch (e2) {
-                    RiverTrail.Helper.debugThrow(e + e2);
+                    RiverTrail.Helper.debugThrow(e); // ignore e2. If buildlog throws, there simply is none.
                 }
             }
         }
@@ -166,14 +171,14 @@ RiverTrail.compiler = (function () {
     // Driver method to steer compilation process
     //
     function parse(paSource, construct, rankOrShape, kernel, args, lowPrecision) {
-        var parser = Narcissus.parser;
-        var kernelJS = kernel.toString();
-        var ast = parser.parse(kernelJS);        
+        var ast = RiverTrail.Helper.parseFunction(kernel);
         var rank = rankOrShape.length || rankOrShape;
         try {
-            RiverTrail.Typeinference.analyze(ast.children[0], paSource, construct, rank, args, lowPrecision);
-            RiverTrail.RangeAnalysis.analyze(ast.children[0], paSource, construct, rankOrShape, args);
-            RiverTrail.RangeAnalysis.propagate(ast.children[0]);
+            RiverTrail.Typeinference.analyze(ast, paSource, construct, rank, args, lowPrecision);
+            RiverTrail.RangeAnalysis.analyze(ast, paSource, construct, rankOrShape, args);
+            RiverTrail.RangeAnalysis.propagate(ast);
+            RiverTrail.InferBlockFlow.infer(ast);
+            RiverTrail.InferMem.infer(ast);
         } catch (e) {
             RiverTrail.Helper.debugThrow(e);
         }
@@ -238,6 +243,8 @@ RiverTrail.compiler = (function () {
                 // SAH: treating all non-PA arrays as float requires a check for regularity and 
                 //      homogeneity! This is done in the transfer code.
                 argumentTypes.push({ inferredType: defaultNumberType, dimSize: [argument.length] });
+            } else if (RiverTrail.Helper.isTypedArray(argument)) {
+                argumentTypes.push({ inferredType: RiverTrail.Helper.inferTypedArrayType(argument), dimSize: [argument.length] });
             } else if (argument instanceof RiverTrail.Helper.Integer) {
                 // These are special integer values used for offsets and the like. 
                 argumentTypes.push({ inferredType: "int", dimSize: [] });
@@ -248,8 +255,7 @@ RiverTrail.compiler = (function () {
                 // numbers are floats
                 argumentTypes.push({ inferredType: defaultNumberType, dimSize: [] });
             } else {
-                console.log("parseGenRun:482 argument:", argument, " argTypes: ", argTypes);
-                throw new CompilerBug("parseGenRun:482 - type derivation for argument not implemented yet");
+                throw new CompilerBug("Type derivation for argument not implemented yet");
             }
         }
         return argumentTypes;

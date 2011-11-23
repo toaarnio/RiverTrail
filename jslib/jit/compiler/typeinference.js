@@ -37,6 +37,7 @@ RiverTrail.Typeinference = function () {
     var inferPAType = RiverTrail.Helper.inferPAType;
     
     const debug = false;
+    const allowGlobalFuns = false; // Set to true so kernel functions can call global functions.
 
     var openCLUseLowPrecision = false;
 
@@ -84,6 +85,10 @@ RiverTrail.Typeinference = function () {
         return ((this.kind === Type.LITERAL) &&
                 (this.type === TLiteral.BOOL));
     };
+    Tp.isScalarType = function () { // type is a scalar value
+        return ((this.kind === Type.LITERAL) &&
+                ((this.type === TLiteral.BOOL) || (this.type === TLiteral.NUMBER)));
+    };
     Tp.isObjectType = function (name) { // checks whether type is object; name is optional
         return ((this.kind === Type.OBJECT) &&
                 ((name === undefined) ||
@@ -99,6 +104,12 @@ RiverTrail.Typeinference = function () {
     Tp.getOpenCLShape = function () {
         return []; // everything is a scalar unless defined otherwise
     };
+    Tp.getOpenCLSize = function () {
+        reportBug("size of type not known:" + this.kind);
+    };
+    Tp.getOpenCLAddressSpace = function () {
+        return "";
+    }
 
     //
     // literal type for all literals
@@ -134,6 +145,20 @@ RiverTrail.Typeinference = function () {
         result.OpenCLType = this.OpenCLType;
 
         return result;
+    };
+    TLp.getOpenCLSize = function getOpenCLSize() {
+        switch (this.OpenCLType) {
+            case "float":
+            case "int":
+                return 4;
+                break;
+            case "double":
+                return 8;
+                break;
+            default:
+                reportBug("size of type not known:" + this.OpenCLType);
+                break;
+        }
     };
 
     //
@@ -182,14 +207,19 @@ RiverTrail.Typeinference = function () {
     };
     TObject.deriveObjectType = function (obj) {
         var name, key;
+        var isInstance = function isInstance (x) { 
+            return (obj instanceof x);
+        };
         for (key in this.prototype.registry) {
-            if (this.prototype.registry[key].constructor &&
-                (obj instanceof this.prototype.registry[key].constructor)) {
+            if (((this.prototype.registry[key].constructor !== undefined) &&
+                 (obj instanceof this.prototype.registry[key].constructor)) ||
+                ((this.prototype.registry[key].constructors !== undefined) &&
+                 this.prototype.registry[key].constructors.some(isInstance))) {
                 name = key;
                 break;
             }
         }
-        return key;
+        return name;
     };
 
     var TOp = TObject.prototype = new Type(Type.OBJECT);
@@ -233,6 +263,12 @@ RiverTrail.Typeinference = function () {
     TOp.getOpenCLShape = function () {
         return this.getHandler().getOpenCLShape.call(this) || [];
     };
+    TOp.getOpenCLSize = function () {
+        return this.getHandler().getOpenCLSize.call(this) || reportBug("unknown OpenCL size for object: " + this.name);
+    };
+    TOp.getOpenCLAddressSpace = function () {
+        return this.properties.addressSpace || "";
+    }
 
     //
     // Bottom type for error states
@@ -261,6 +297,14 @@ RiverTrail.Typeinference = function () {
     TEp.lookup = function (name) {
         return (this.bindings[name] !== undefined) ? this.bindings[name] : ((this.parent && this.parent.lookup(name)) || undefined);
     }
+    TEp.getType = function (name) {
+        var entry = this.lookup(name);
+        if (entry) {
+            return entry.type;
+        } else {
+            return undefined;
+        }
+    };
     TEp.bind = function (name, duplicates) {
         if (name instanceof Array) {
             name.forEach( this.bind);
@@ -446,7 +490,7 @@ RiverTrail.Typeinference = function () {
 
             return type;
         },
-        constructor : null,
+        constructor : undefined,
         makeType : null,
         updateOpenCLType : null,
         equals : null
@@ -488,7 +532,9 @@ RiverTrail.Typeinference = function () {
 
             return type;
         },
-        constructor : Array,
+        constructor : undefined,
+        constructors : [Array, Float64Array, Float32Array, Uint32Array, Int32Array, 
+                        Uint16Array, Int16Array, Uint8ClampedArray, Uint8Array, Int8Array],
         makeType : function (val) {
             var type;
             if (typeof(val) === "number") {
@@ -508,6 +554,14 @@ RiverTrail.Typeinference = function () {
                     reportError("empty arrays are not supported yet");
                 }
                 type.updateOpenCLType();
+            } else if (RiverTrail.Helper.isTypedArray(val)) {
+                // This is cheating, as typed arrays do not have the same interface, really.
+                // However, we do not support map/reduce etc. anyway.
+                type = new TObject(TObject.ARRAY);
+                type.properties.shape = [val.length];
+                type.properties.elements = new TLiteral(TLiteral.NUMBER);
+                type.properties.elements.OpenCLType = RiverTrail.Helper.inferTypedArrayType(val);
+                type.updateOpenCLType();
             } else {
                 reportError("unsupported array contents encountered");
             }
@@ -525,6 +579,9 @@ RiverTrail.Typeinference = function () {
         },
         getOpenCLShape : function () {
             return this.properties.shape.concat(this.properties.elements.getOpenCLShape());
+        },
+        getOpenCLSize : function () {
+            return this.properties.shape.reduce(function (prev, curr) { return prev*curr; }, 1) * this.properties.elements.getOpenCLSize();
         },
         equals : function (other) {
             return (this.properties.shape.length === other.properties.shape.length) &&
@@ -635,6 +692,9 @@ RiverTrail.Typeinference = function () {
         getOpenCLShape : function () {
             return this.properties.shape.concat(this.properties.elements.getOpenCLShape());
         },
+        getOpenCLSize : function () {
+            return this.properties.shape.reduce(function (prev, curr) { return prev*curr; }, 1) * this.properties.elements.getOpenCLSize();
+        },
         equals : function (other) {
             return (this.properties.shape.length === other.properties.shape.length) &&
                    this.properties.shape.every( function (val, idx) { return val === other.properties.shape[idx]; }) &&
@@ -659,7 +719,20 @@ RiverTrail.Typeinference = function () {
         if (this.bindings[fname] !== undefined) reportError("functions need to be uniquely defined within a scope", f);
         this.bindings[fname] = f;
     };
-
+    FEp.toFunDecls = function () {
+        var result = [];
+        var fun;
+        for (var name in this.bindings) {
+            fun = this.bindings[name];
+            if (fun.typeInfo) {
+                // this is actually called somewhere, so we keep it
+                // normalize the name (global functions might have a different name than what they were bound to!)
+                fun.name = name;
+                result.push(fun);
+            }
+        }
+        return result;
+    };
     //
     // main analysis driver
     //
@@ -691,9 +764,13 @@ RiverTrail.Typeinference = function () {
                 // from this function. We do this by glueing the function store to the function instance. 
                 fEnv = new FEnv(fEnv);
                 ast.funDecls.forEach(function (f) {fEnv.add(f); f.fEnv = fEnv});
+                ast.children.map(function (ast) { return drive(ast, tEnv, fEnv); });
+                tEnv.resetAccu();
                 // remember symbol table for later phases
                 ast.symbols = tEnv;
-                // fallthrough
+                // add all locally used functions to funDecls (including the globals we dragged into the scope)
+                ast.funDecls = fEnv.toFunDecls();
+                break;
             case BLOCK:
                 ast.children.map(function (ast) { return drive(ast, tEnv, fEnv); });
                 tEnv.resetAccu();
@@ -939,7 +1016,23 @@ RiverTrail.Typeinference = function () {
                         var argT = tEnv.accu;
                         tEnv.resetAccu();
                         // grab function
-                        var fun = fEnv.lookup(ast.children[0].value) || reportError("unknown function `" + ast.children[0].value + "`", ast);
+                        var fun = fEnv.lookup(ast.children[0].value);
+                        if (!fun) {
+                           if (allowGlobalFuns) {
+                               // so this is not a local function. first make sure it is not a local variable
+                               !tEnv.lookup(ast.children[0].value) || reportError("not a function `" + ast.children[0].value + "`", ast);
+                               // CHEAT: we would have to inspect the current functions closure here but we cannot. So we just
+                               //        take whatever the name is bound to in the current scope. 
+                               //        This should at least be the global scope, really...
+                               var obj = eval(ast.children[0].value) || reportError("unknown function `" + ast.children[0].value + "`", ast);
+                               (typeof(obj) === 'function') || reportError("not a function `" + ast.children[0].value + "`", ast);
+                               fun = RiverTrail.Helper.parseFunction(obj.toString());
+                               // if we get here, we can just add the function to the function environment for future use
+                               fEnv.add(fun, ast.children[0].value);
+                           } else {
+                               reportError("unknown function `" + ast.children[0].value + "`", ast);
+                           }
+                        }
                         if (fun.typeInfo) {
                             // this function has been called before. If the types match, we are fine. Otherwise we have
                             // to create a specialised version. The latter is a TODO;

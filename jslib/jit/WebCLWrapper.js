@@ -12,6 +12,7 @@ function WebCLContext(context)
 }
 
 WebCLContext.prototype.mapData = function(data) {
+  console.log("mapData: data =", data, "byteLength=", data.byteLength);
   var memobj = this.ctx.createBuffer(WebCL.CL_MEM_READ_ONLY, data.byteLength);
   this.q.enqueueWriteBuffer(memobj, true, 0, data.byteLength, data, []);
   return new WebCLMemoryObject(this, memobj, data);
@@ -19,7 +20,9 @@ WebCLContext.prototype.mapData = function(data) {
 
 WebCLContext.prototype.allocateData = function(data, length) {
   var elem_size = data.byteLength / data.length;
-  var memobj = this.ctx.createBuffer(WebCL.CL_MEM_READ_WRITE, length * elem_size);
+  var allocSize = elem_size < 4 ? length * 4 : length * elem_size;
+  console.log("allocateData: data =", data, "byteLength=", allocSize);
+  var memobj = this.ctx.createBuffer(WebCL.CL_MEM_READ_WRITE, allocSize);
   return new WebCLMemoryObject(this, memobj, data);
 };
 
@@ -28,6 +31,8 @@ WebCLContext.prototype.allocateData2 = function(data, length) {
 };
 
 WebCLContext.prototype.compileKernel = function(source, name, options) {
+  console.log("compileKernel:");
+  console.log(source);
   options = options || "";
   this.buildLog = "";
   var dev = this.devices[0];
@@ -81,19 +86,25 @@ function WebCLKernel(context, kernel)
 {
   this.ctx = context;
   this.kernel = kernel;
+  this.dummyArrayBuffer = new Int32Array(32);  // HACK HACK
+  this.FAILRET = this.ctx.allocateData(this.dummyArrayBuffer, 2); // HACK HACK
 }
 
 WebCLKernel.prototype.setArgument = function(index, memobj) {
-  this.kernel.setKernelArg(index, memobj.memobj, WebCL.types.MEM);
+  console.log("kernel.setArgument: index =", index, "arg =", memobj);
+  this.kernel.setKernelArg(index+1, memobj.memobj); // HACK HACK
 };
 
 WebCLKernel.prototype.setScalarArgument = function(index, arg, isInteger, highPrecision) {
+  console.log("kernel.setScalarArgument: index =", index, "arg =", arg);
   var type = isInteger ? WebCL.types.INT :
     (highPrecision ? WebCL.types.DOUBLE : WebCL.types.FLOAT);
-  this.kernel.setKernelArg(index, arg, type);
+  this.kernel.setKernelArg(index+1, arg, type);  // HACK HACK
 };
 
 WebCLKernel.prototype.run = function(rank, shape, tile) {
+  console.log("kernel.run");
+  this.kernel.setKernelArg(0, this.FAILRET.memobj);  // HACK HACK
   this.ctx.q.enqueueNDRangeKernel(this.kernel, rank, [], shape, [], []);
   this.ctx.q.finish();
 };
@@ -110,6 +121,7 @@ function WebCLMemoryObject(context, memory_object, data)
 }
 
 WebCLMemoryObject.prototype.getValue = function() {
+  console.log("WebCLMemoryObject.getValue: this.data.byteLength =", this.data.byteLength);
   this.ctx.q.enqueueReadBuffer(this.memobj, true, 0, this.data.byteLength, this.data, []);
   this.memobj.releaseCLResources();
   this.memobj = undefined;

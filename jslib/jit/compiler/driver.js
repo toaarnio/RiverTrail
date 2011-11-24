@@ -61,13 +61,6 @@ RiverTrail.compiler = (function () {
         throw Error("Cannot initialise OpenCL Interface: " + JSON.stringify(e));
     }
 
-    // check whether we have the right version of the extension; as the user has some extension installed, he probably wants to use
-    // the right one for this library, so we alert him
-    if (dpoInterface.version !== 2) {
-        alert("This webpage requires a newer version of the RiverTrail Firefox extension. Please visit http://github.com/rivertrail/rivertrail/downloads.");
-        throw Error("RiverTrail extension out of date");
-    }
-
     // main hook to start the compilation/execution process for running a construct using OpenCL
     // paSource -> 'this' inside kernel
     // f -> function to run
@@ -98,10 +91,6 @@ RiverTrail.compiler = (function () {
                                      function (object) {
                                          if (object instanceof Array) {
                                              var result = new ParallelArray( lowPrecision ? Float32Array : Float64Array, object);
-                                             result._wasArray = true;
-                                             return result;
-                                         } else if (RiverTrail.Helper.isTypedArray(object)) {
-                                             var result = new ParallelArray( object);
                                              result._wasArray = true;
                                              return result;
                                          } else {

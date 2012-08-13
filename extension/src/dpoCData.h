@@ -45,14 +45,18 @@ public:
   NS_DECL_NSISECURITYCHECKEDCOMPONENT
   NS_DECL_DPOIDATA
 
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(dpoCData)
+  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_AMBIGUOUS(dpoCData, dpoIData)
 
   dpoCData(dpoIContext *aParent);
-  nsresult InitCData(JSContext *cx, cl_command_queue aQueue, cl_mem aMemObj, uint32 aType, uint32 aLength, uint32 aSize, const jsval anArray);
+  nsresult InitCData(JSContext *cx, cl_command_queue aQueue, cl_mem aMemObj, uint32 aType, uint32 aLength, uint32 aSize, JSObject *anArray);
   cl_mem GetContainedBuffer();
   uint32 GetType();
   uint32 GetSize();
   uint32 GetLength();
+
+#ifdef INCREMENTAL_MEM_RELEASE
+  static int CheckFree();
+#endif /* INCREMENTAL_MEM_RELEASE */
 
 private:
   ~dpoCData();
@@ -65,10 +69,16 @@ protected:
   uint32 type;
   uint32 length;
   uint32 size;
-  jsval theArray;
+  JSObject *theArray;
   JSContext *theContext;
   bool retained;
 #ifdef PREALLOCATE_IN_JS_HEAP
   bool mapped;
 #endif /* PREALLOCATE_IN_JS_HEAP */
+  cl_int EnqueueReadBuffer( size_t size, void *ptr);
+#ifdef INCREMENTAL_MEM_RELEASE
+  static void DeferFree(cl_mem);
+  static cl_mem *defer_list; 
+  static uint defer_pos;
+#endif /* INCREMENTAL_MEM_RELEASE */
 };

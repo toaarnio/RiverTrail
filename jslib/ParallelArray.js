@@ -117,7 +117,9 @@ var ParallelArray = function () {
     // use Proxies to emulate square bracket index selection on ParallelArray objects
     var enableProxies = false;
 
-    // check whether the new extension is installed.
+  /* THE FOLLOWING SECTION IS MODIFIED FOR COMPATIBILITY WITH WEBCL */
+
+  // check whether the new extension is installed.
   var useWebCL = false;
   if (window.WebCL !== undefined) {
     useWebCL = true;
@@ -143,6 +145,8 @@ var ParallelArray = function () {
       // eat the problem after you announce it to the console log.
     }
   }
+  
+  /* END OF MODIFICATIONS REQUIRED FOR WEBCL COMPATIBILITY */
 
     // this is the storage that is used by default when converting arrays 
     // to typed arrays.
@@ -156,7 +160,6 @@ var ParallelArray = function () {
     var useKernelCaching = true;
     // whether to use lazy communication of openCL values
     var useLazyCommunication = false;
-    //var useLazyCommunication = false;
     // whether to cache OpenCL buffers
     var useBufferCaching = false;
     // whether to do update in place in scan
@@ -203,12 +206,12 @@ var ParallelArray = function () {
     // If this.data is a OpenCL memory object, grab the values and store the OpenCL memory 
     // object in the cache for later use.
     var materialize = function materialize() {
-        if (useWebCL && (this.data instanceof WebCLMemoryObject)) {
+        if (useWebCL && (this.data instanceof WebCLBufferWrapper)) {
             // we have to first materialise the values on the JavaScript side
-            this.cachedOpenCLMem = this.data;
-            this.data = this.cachedOpenCLMem.getValue();
-            if (!useBufferCaching) {
-                this.cachedOpenCLMem = undefined;
+            var cachedOpenCLMem = this.data;
+            this.data = cachedOpenCLMem.getValue();
+            if (useBufferCaching) {
+                this.cachedOpenCLMem = cachedOpenCLMem;
             }
         }
     };
@@ -312,16 +315,28 @@ var ParallelArray = function () {
 
     // Flatten a multidimensional array to a single dimension.
     var createFlatArray = function createFlatArray (arr) {
-        var localShape = arrShape(arr);
-        var resultLength = shapeToLength(localShape);
-        var flatArray = new Array(resultLength);
+        // we build localShape and localRank as we go
+        var localShape = [];
+        var localRank = undefined;
+        var flatArray = new Array();
         var flatIndex = 0;
 
         var flattenFlatParallelArray = function flattenFlatParallelArray (level, pa) {
             // We know we have a parallel array, we know it is flat.
             // Flat arrays are flat all the way down.
-            if (!localShape.slice(level).every(function (v, idx) {return v === pa.shape[idx];})) {
-                throw "wrong shape of nested PA " + localShape.slice(level) + " and " + pa.shape;
+            // update/check localShape and localRank
+            pa.shape.forEach( function (v, idx) { 
+                    if (localShape[level+idx] === undefined) {
+                        localShape[level+idx] = v;
+                    } else if (localShape[level+idx] !== v) {
+                        //throw "wrong shape of nested PA at " + idx + " local " + v + "/global " + localShape[level+idx];
+                        throw "shape mismatch: level " + (level+idx) + " expected " + localShape[level+idx] + " found " + v;
+                    }
+                });
+            if (localRank === undefined) {
+                localRank = level + pa.shape.length;
+            } else if (localRank !== level + pa.shape.length) {
+                throw "dimensionality mismatch; expected " + localRank + " found " + (level + pa.shape.length);
             }
             var i;       
             var size = shapeToLength(pa.shape);
@@ -340,30 +355,32 @@ var ParallelArray = function () {
                     return;
                 }
             }
-            if (localShape[level] != arr.length) {
+            if (localShape[level] === undefined) {
+                localShape[level] = arr.length;
+            } else if (localShape[level] !== arr.length) {
                 // We do not have a regular array.
-                console.log("createFlatArray: array is not regular - shape[level] != arr.length");
-                console.log(" shape: ", localShape, " level: ", level, " arr.length: ". arr.length);
-                throw ("Array is not regular.");
+                throw "shape mismatch: level " + (level) + " expected " + localShape[level] + " found " + arr.length;
             }
             for (thisLevelIndex=0;thisLevelIndex<arr.length;thisLevelIndex++) {
                 if (arr[thisLevelIndex] instanceof Array) { // need to add regular array check...
                     flattenInner(level+1, arr[thisLevelIndex]);
                 } else if (arr[thisLevelIndex] instanceof ParallelArray) {
-                
                     if (arr[thisLevelIndex].flat) {
                         // Flat arrays are flat all the way down.
                         flattenFlatParallelArray(level+1, arr[thisLevelIndex]);
                     } else {
-                        if (localShape.length > level) {
-                            throw "irregular array -- too few dimensions";
-                        }
                         flattenInner(level+1, arr[thisLevelIndex].get(i));
                     }
                 } else {
                     // it's not an array or ParallelArray so it is just an element.
                     flatArray[flatIndex] = arr[thisLevelIndex];
                     flatIndex++;
+                    // check for rank uniformity
+                    if (localRank === undefined) {
+                        localRank = level;
+                    } else if (localRank !== level) {
+                        throw "dimensionality mismatch; expected " + localRank + " found " + level;
+                    }
                 }
             }
         };  // flattenInner
@@ -371,12 +388,8 @@ var ParallelArray = function () {
             flattenInner(0, arr);
         } catch (err) {
             console.log("flattenArray:", err);
-            console.log("returning null instead of a vector.");
             return null;
         };
-        if (flatArray.length != resultLength) {
-            console.log ("bummer .. (flatArray.length (", flatArray.length, ") != resultLength(", resultLength, ")");
-        }
         return flatArray;
     };
 
@@ -579,19 +592,6 @@ var ParallelArray = function () {
         this.flat = true;
         this.offset = 0;
 
-        if (useLazyCommunication) {
-            // wrap all functions that need access to the data
-            requiresData(this, "get");
-            requiresData(this, "partition");
-            requiresData(this, "concat");
-            requiresData(this, "join");
-            requiresData(this, "slice");
-            requiresData(this, "toString");
-            requiresData(this, "getArray");
-        } else {
-            this.materialize();
-        }
-
         return this;
     };
     
@@ -734,11 +734,7 @@ var ParallelArray = function () {
         if (shapeToLength(newShape) != shapeToLength(pa.shape)) {
             throw new RangeError("Attempt to partition ParallelArray unevenly.");
         }
-        var newPA = new ParallelArray();
-        newPA.shape = newShape;
-        newPA.strides = shapeToStrides(newShape);
-        newPA.offset = pa.offset;
-        newPA.data = pa.data;
+        var newPA = new ParallelArray("reshape", pa, newShape);
         return newPA;
     };
     // Does this parallelArray have the following dimension?
@@ -800,7 +796,7 @@ var ParallelArray = function () {
         if (!this.isRegular()) {
             throw new TypeError("this is not a regular ParallelArray.");
         }
-        return (depth === undefined) ? this.shape : this.shape.slice(0, depth);
+        return (depth === undefined) ? this.shape.slice(0) : this.shape.slice(0, depth);
     };
    
     // When in the elemental function f "this" is the same as "this" in combine.
@@ -867,7 +863,7 @@ var ParallelArray = function () {
         var paResult;
         var extraArgs; 
         var extraArgOffset = 2;
-        if (typeof(depth) === 'function') {
+        if ((typeof(depth) === 'function') || (depth instanceof low_precision.wrapper)) {
             f = depth;
             depth = 1;
             extraArgOffset = 1;
@@ -983,20 +979,19 @@ var ParallelArray = function () {
     /***
     reduce
     Arguments
-        Elemental function described below
-        Optional- initial value of the accumulator
-            If not provided the value of first element in the array is used.
+        Elemental function described below.
         Optional arguments passed unchanged to elemental function
 
     Elemental Function 
-        this - An element from the ParallelArray
-        Accumulator - Value derived from previous invocation of the elemental function . 
-        Optional arguments - Same as the optional arguments passed to reduce
+        this - the entire ParallelArray 
+        a, b - arguments to be reduced and returned
+        Optional arguments - Same as the optional arguments passed to map 
         Result
-            The accumulator used in further applications of the elemental function.
+            The result of the reducing a and b, typically used in further 
+            applications of the elemental function.
 
     Returns
-        The final value of the accumulator.
+        The final value, if the ParallelArray has only 1 element then that element is returned.
 
     Discussion
         Reduce is free to group calls to the elemental function in arbitrary ways and 
@@ -1006,14 +1001,16 @@ var ParallelArray = function () {
         always be the same regardless of the order that reduces calls addition. Average 
         is an example of non-associative function. Average(Average(2, 3), 9) is 5 2/3 
         while Average(2, Average(3, 9)) is 4. Reduce is permitted to chose whichever 
-        ordering it finds convenient.
+        call ordering it finds convenient.
 
-        Reduce is only require to return a result consistent with some ordering and 
-        is not required to chose the same ordering on subsequent calls. Furthermore, 
+        Reduce is only required to return a result consistent with some call ordering and 
+        is not required to chose the same call ordering on subsequent calls. Furthermore, 
         reduce does not magically resolve problems related to the well document fact 
         that some floating point numbers are not represented exactly in JavaScript 
         and the underlying hardware.
 
+        Reduce does not require the elemental function be communitive since it does
+        induce reordering of the arguments passed to the elemental function's.
     ***/
 
     var reduce = function reduce(f, optionalInit) {
@@ -1026,49 +1023,53 @@ var ParallelArray = function () {
         var len = this.shape[0];
         var result;
         var i;
-        if (arguments.length == 2) {
-            result = f.call(this.get(0), optionalInit);
-        } else {
-            result = this.get(0);
-        }
-            
+
+        result = this.get(0);
         for (i=1;i<len;i++) {
-            result = f.call(this.get(i), result);
+            result = f.call(this, result, this.get(i));
         }
+
         return result;
     };
-        /***
+    /***
         scan
+    
         Arguments
             Elemental function described below
             Optional arguments passed unchanged to elemental function
 
         Elemental Function 
-            this - An element from the ParallelArray
-            Accumulator - Value derived from previous invocation of the 
-                         elemental function. 
+            this - the entire ParallelArray 
+            a, b - arguments to be reduced and returned
             Optional arguments - Same as the optional arguments passed to scan
-            Result
-                An element to be placed in the result at the same offset we found “this”
+            Result - The result of the reducing a and b, typically used in further 
+            applications of the elemental function.
  
         Returns
-            A freshly minted ParallelArray whose elements are the results of 
-            applying the elemental function to the elements in the original 
-            ParallelArray and the accumulator plus any optional arguments.
+            A freshly minted ParallelArray whose ith elements is the results of 
+            using the elemental function to reduce the elements between 0 and i
+            in the original ParallelArray.
 
         Example: an identity function
-            pa.scan(function(value){return this;})
+            pa.scan(function(a, b){return b;})
 
         Discussion:
-        Similar to reduce scan can arbitrarily reorder the order the calls to 
-        the elemental functions. This cannot be detected if the elemental 
-        function is associative so using a elemental function such as addition 
-        to create a partial sum will produce the same result regardless of the 
-        order in which the elemental function is called. However using a 
-        non-associative function can produce different results due to the 
-        ordering that scan calls the elemental function. While scan will 
-        produce a result consistent with a legal ordering the ordering and the 
-        result may differ for each call to scan. 
+            We implement what is known as an inclusive scan which means that
+            the value of the ith result is the [0 .. i].reduce(elementalFunction) 
+            result. Notice that the first element of the result is the same as 
+            the first element in the original ParallelArray. An exclusive scan can
+            be implemented by shifting right end off by one the results 
+            of an inclusive scan and inserting the identity at location 0. 
+            Similar to reduce scan can arbitrarily reorder the order the calls to 
+            the elemental functions. Ignoring floating point anomalies, this 
+            cannot be detected if the elemental function is associative so 
+            using a elemental function such as addition to create a partial 
+            sum will produce the same result regardless of the 
+            order in which the elemental function is called. However using a 
+            non-associative function can produce different results due to the 
+            ordering that scan calls the elemental function. While scan will 
+            produce a result consistent with a legal ordering the ordering and the 
+            result may differ for each call to scan. 
 
         Typically the programmer will only call scan with associative functions 
         but there is nothing preventing them doing otherwise.
@@ -1084,13 +1085,15 @@ var ParallelArray = function () {
             // 
             // handle case where we only have one row => the result is the first element
             //
-            return this.get(0);
+            return this;
         }
         var i;
+
         var len = this.length;
         var rawResult = new Array(len);
         var privateThis;
         var callArguments = Array.prototype.slice.call(arguments, 0); // array copy
+        var ignoreLength = callArguments.unshift(0); // callArguments now has 2 free location for a and b.
         if (this.getShape().length < 2) {
             // 
             // Special case where selection yields a scalar element. Offloading the inner
@@ -1100,9 +1103,9 @@ var ParallelArray = function () {
             //
             rawResult[0] = this.get(0);
             for (i=1;i<len;i++) {
-                privateThis = this.get(i);
                 callArguments[0] = rawResult[i-1];
-                rawResult[i] = f.apply(privateThis, callArguments);
+                callArguments[1] = this.get(i);;
+                rawResult[i] = f.apply(this, callArguments);
             }
             return (new ParallelArray(rawResult));
         }
@@ -1127,7 +1130,7 @@ var ParallelArray = function () {
                 privateThis = this.get(1);
                 callArguments[0] = rawResult[0];
                 rawResult[1] = f.apply(privateThis, callArguments);
-                if ((rawResult[1].data instanceof WebCLMemoryObject) && 
+                if ((rawResult[1].data instanceof WebCLBufferWrapper) && 
                     equalsShape(rawResult[0].getShape(), rawResult[1].getShape())) {
                     // this was computed by openCL and the function is shape preserving.
                     // Try to preallocate and compute the result in place!
@@ -1391,6 +1394,8 @@ var ParallelArray = function () {
                 offset = this.offset;
                 var len = index.length;
                 for (i=0;i<len;i++) {
+                    // if we go out of bounds, we return undefined
+                    if (index[i] < 0 || index[i] >= this.shape[i]) return undefined;
                     offset = offset + index[i]*this.strides[i];
                 }
                 if (this.shape.length === index.length) {
@@ -1415,9 +1420,10 @@ var ParallelArray = function () {
             //  else it is flat but not (index instanceof Array) 
             if (arguments.length == 1) { 
                 // One argument that is a scalar index.
+                if ((index < 0) || (index >= this.shape[0])) return undefined;
                 if (this.shape.length == 1) {
                     // a 1D array
-                    return this.data[this.offset + index];                     
+                    return this.data[this.offset + index];
                 } else {
                     // we have a nD array and we want the first dimension so create the new array
                     offset = this.offset+this.strides[0]*index;
@@ -1444,6 +1450,8 @@ var ParallelArray = function () {
                 result = this;
                 for (i=0;i<arguments[0].length;i++) {
                     result = result.data[arguments[0][i]];
+                    // out of bounds => abort further selections
+                    if (result === undefined) return result;
                 }
                 return result;
             }
@@ -1453,6 +1461,8 @@ var ParallelArray = function () {
         result = this;
         for (i=0;i<arguments.length;i++) {
             result = result.data[arguments[i]];
+            // out of bounds => abort further selections
+            if (result === undefined) return result;
         }
         return result;
     };
@@ -1466,7 +1476,7 @@ var ParallelArray = function () {
             var currImage = context.getImageData(0, 0, canvas.width, canvas.height);
             var imageData = context.createImageData(currImage.width, currImage.height);
             var data = imageData.data;
-            if (useWebCL && (this.data instanceof WebCLMemoryObject)) {
+            if (useWebCL && (this.data instanceof WebCLBufferWrapper)) {
                 this.data.writeTo(data);
             } else {
                 for (var i = 0; i < this.data.length; i++) {
@@ -1629,10 +1639,13 @@ var ParallelArray = function () {
     
     // toString()   Converts an array to a string, and returns the result
     var toString = function toString (arg1) {
-        if (useWebCL && isTypedArray(this.data)) {
-            return Array.prototype.reduce.call(this.data, function (res, element) { return res + " " + element; }, "[") + " ]";
+        var max = this.shape.reduce(function (v, p) { return v*p; }) + this.offset;
+        var res = "[";
+        for (var pos = this.offset; pos < max; pos++) {
+            res += ((pos === this.offset) ? "" : ", ") + this.data[pos];
         }
-        return this.data.toString();
+        res += "]";
+        return res;
     };
     
     // unshift()    Adds new elements to the beginning of an array, and returns the new length
@@ -1643,7 +1656,6 @@ var ParallelArray = function () {
     var flatten = function flatten () {
         var len = this.length;
         var newLength = 0;
-        var result;
         var shape;
         var i;
         if (this.flat) {
@@ -1651,14 +1663,9 @@ var ParallelArray = function () {
             if (shape.length == 1) {
                 throw new TypeError("ParallelArray.flatten array is flat");
             }
-            result = new ParallelArray();
-            result.shape = shape.slice(1);
-            result.shape[0] = result.shape[0] * shape[0];
-            result.strides = this.strides.slice(1);
-            result.offset = 0;
-            result.flat = true;
-            result.data = this.data;
-            return result;
+            var newShape = shape.slice(1);
+            newShape[0] = newShape[0] * shape[0];
+            return new ParallelArray("reshape", this, newShape);
         }
         for (i=0;i<len;i++) {
             if (this.get(i) instanceof ParallelArray) {
@@ -1668,17 +1675,16 @@ var ParallelArray = function () {
             }
         }
         var resultArray = new Array(newLength);
-            var next = 0;
-            for (i=0;i<len;i++) {
-                var pa = this.get(i);
-                    for (j=0; j<pa.length; j++) {
-                        resultArray[next] = pa.get(j);
-                            next++;                
-                    }
-            }
+        var next = 0;
+        for (i=0;i<len;i++) {
+            var pa = this.get(i);
+                for (j=0; j<pa.length; j++) {
+                    resultArray[next] = pa.get(j);
+                        next++;
+                }
+        }
         
-            var res = new ParallelArray(resultArray);
-            return res;
+        return new ParallelArray(resultArray);
     };
     var flattenRegular = function flattenRegular () {
         var result;
@@ -1773,6 +1779,7 @@ var ParallelArray = function () {
                 var aLen = arguments.length;
                 if (aLen === 1) {
                     if (typeof(index) === "number") {
+                        if ((index < 0) || (index >= this.shape[0])) return undefined;
                         return this.data[this.offset + index];
                     } else {
                         /* fall back to slow mode */
@@ -1810,9 +1817,11 @@ var ParallelArray = function () {
                 var result;
                 var aLen = arguments.length;
                 if (aLen === 2) {
+                    if ((index < 0) || (index >= this.shape[0]) || (index2 < 0) || (index2 >= this.shape[1])) return undefined;
                     return this.data[this.offset + index * this.strides[0] + index2];
                 } else if (aLen === 1) {
                     if (typeof index === "number") {
+                        if ((index < 0) || (index >= this.shape[0])) return undefined;
                         result = new Fast1DPA(this);
                         result.offset = this.offset + index * this.strides[0];
                         result.elementalType = this.elementalType;
@@ -1855,8 +1864,10 @@ var ParallelArray = function () {
                 var result;
                 var aLen = arguments.length;
                 if (aLen === 3) {
-                        return this.data[this.offset + index * this.strides[0] + index2 * this.strides[1] + index3];
+                    if ((index < 0) || (index >= this.shape[0]) || (index2 < 0) || (index2 >= this.shape[1]) || (index3 < 0) || (index3 >= this.shape[2])) return undefined;
+                    return this.data[this.offset + index * this.strides[0] + index2 * this.strides[1] + index3];
                 } else if (aLen === 2) {
+                    if ((index < 0) || (index >= this.shape[0]) || (index2 < 0) || (index2 >= this.shape[1])) return undefined;
                     result = new Fast1DPA(this);
                     result.offset = this.offset + index * this.strides[0] + index2 * this.strides[1];
                     result.elementalType = this.elementalType;
@@ -1866,6 +1877,7 @@ var ParallelArray = function () {
                     return result;
                 } else if (aLen === 1) {
                     if (typeof index === "number") {
+                        if ((index < 0) || (index >= this.shape[0])) return undefined;
                         result = new Fast2DPA(this);
                         result.offset = this.offset + index * this.strides[0];
                         result.elementalType = this.elementalType;
@@ -1904,9 +1916,18 @@ var ParallelArray = function () {
         } else if ((arguments.length == 2) && (typeof(arguments[0]) == 'function')) {
             // Special case where we force the type of the result. Should only be used internally
             result = createSimpleParallelArray.call(this, arguments[1], arguments[0]);
-        } else if (useWebCL && (arguments[0] instanceof WebCLMemoryObject)) {
+        } else if ((arguments.length == 3) && (arguments[0] == 'reshape')) {
+            // special constructor used internally to create a clone with different shape
+            result = this;
+            result.shape = arguments[2];
+            result.strides = shapeToStrides(arguments[2]);
+            result.offset = arguments[1].offset;
+            result.elementalType = arguments[1].elementalType;
+            result.data = arguments[1].data;
+            result.flat = arguments[1].flat;
+        } else if (useWebCL && (arguments[0] instanceof WebCLBufferWrapper)) {
             result = createOpenCLMemParallelArray.apply(this, arguments);
-        } else if (arguments[1] instanceof Function) {    
+        } else if (typeof(arguments[1]) === 'function') {    
             var extraArgs;
             if (arguments.length > 2) {
                 extraArgs = new Array(arguments.length -2); // skip the size vector and the function
@@ -1940,6 +1961,21 @@ var ParallelArray = function () {
             try { // for Chrome/Safari compatability
                 result = Proxy.create(makeIndexOpHandler(result), ParallelArray.prototype);
             } catch (ignore) {}
+        }
+
+        if (result.data instanceof WebCLBufferWrapper) {
+            if (useLazyCommunication) {
+                // wrap all functions that need access to the data
+                requiresData(result, "get");
+                //requiresData(result, "partition");
+                requiresData(result, "concat");
+                requiresData(result, "join");
+                requiresData(result, "slice");
+                requiresData(result, "toString");
+                requiresData(result, "getArray");
+            } else {
+                result.materialize();
+            }  
         }
 
         return result;

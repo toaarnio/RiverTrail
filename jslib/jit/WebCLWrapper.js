@@ -3,7 +3,7 @@
 // Context
 //
 
-var DebugWebCL = true;
+var DebugWebCL = false;
 
 function DEBUG() {
   if (DebugWebCL === true) {
@@ -23,19 +23,20 @@ function WebCLContext(context)
   this.q = this.ctx.createCommandQueue(this.devices[0], 0);
 }
 
-WebCLContext.prototype.mapData = function(data) {
-  DEBUG("mapData: data =", data, "byteLength=", data.byteLength);
-  var memobj = this.ctx.createBuffer(WebCL.CL_MEM_READ_ONLY, data.byteLength);
-  this.q.enqueueWriteBuffer(memobj, true, 0, data.byteLength, data, []);
-  return new WebCLMemoryObject(this, memobj, data);
+WebCLContext.prototype.mapData = function(arrayBufferView) {
+  DEBUG("mapData: source data =", arrayBufferView, "byteLength=", arrayBufferView.byteLength);
+  var clBuffer = this.ctx.createBuffer(WebCL.CL_MEM_READ_ONLY, arrayBufferView.byteLength);
+  this.q.enqueueWriteBuffer(clBuffer, true, 0, arrayBufferView.byteLength, arrayBufferView, []);
+  return new WebCLBufferWrapper(this, clBuffer, arrayBufferView);
 };
 
-WebCLContext.prototype.allocateData = function(data, length) {
-  var elem_size = data.byteLength / data.length;
-  var allocSize = elem_size < 4 ? length * 4 : length * elem_size;
-  DEBUG("allocateData: data =", data, "byteLength=", allocSize);
-  var memobj = this.ctx.createBuffer(WebCL.CL_MEM_READ_WRITE, allocSize);
-  return new WebCLMemoryObject(this, memobj, data);
+WebCLContext.prototype.allocateData = function(elemType, numElems) {
+  var elemSize = elemType.byteLength / elemType.length;
+  var allocSize = numElems * (elemSize < 4 ? 4 : elemSize);
+  DEBUG("allocateData: elemType =", elemType, "byteLength=", allocSize);
+  var clBuffer = this.ctx.createBuffer(WebCL.CL_MEM_READ_WRITE, allocSize);
+  var arrayBufferView = elemType.constructor(numElems);
+  return new WebCLBufferWrapper(this, clBuffer, arrayBufferView);
 };
 
 WebCLContext.prototype.allocateData2 = function(data, length) {
@@ -43,8 +44,7 @@ WebCLContext.prototype.allocateData2 = function(data, length) {
 };
 
 WebCLContext.prototype.compileKernel = function(source, name, options) {
-  DEBUG("compileKernel:");
-  DEBUG(source);
+  DEBUG("compileKernel:", source);
   options = options || "";
   this.buildLog = "";
   var dev = this.devices[0];
@@ -94,22 +94,72 @@ WebCLPlatform.prototype.createContext = function() {
 // Kernel
 // 
 
+// Here's an example kernel that computes the Mandelbrot set. The
+// kernel has just one actual argument: RT1_scale.  The others
+// (_FAILRET, retVal, and retVal__offset) are inserted by RiverTrail
+// for passing error codes and return values.
+/*
+__kernel void RT_computeSet(__global int *_FAILRET,
+                            double RTl_scale,
+                            __global double* retVal,
+                            int retVal__offset) 
+{
+  int _sel_idx_tmp;
+  int _FAIL = 0;
+  int _id_0 = (int)get_global_id(0);
+  int _id_1 = (int)get_global_id(1);
+  int _writeoffset = 0+1 * _id_1+512 * _id_0;
+  _writeoffset += retVal__offset;
+  double  tempResult;
+  __private const int RTl_iv[2] =  { _id_0, _id_1};
+
+  {  
+    int RTl_x;
+    int RTl_y;
+    double RTl_Cr;
+    double RTl_Ci;
+    double RTl_I;
+    double RTl_R;
+    double RTl_I2;
+    double RTl_R2;
+    int RTl_n;
+    RTl_x = RTl_iv[1];
+    RTl_y = RTl_iv[0];
+    RTl_Cr = ((((double)((RTl_x- 256)))/RTl_scale)+ 0.407476);
+    RTl_Ci = ((((double)((RTl_y- 256)))/RTl_scale)+ 0.234204);
+    RTl_I =  0.0, RTl_R =  0.0, RTl_I2 =  0.0, RTl_R2 =  0.0;
+    RTl_n =  0;
+    while ( (((RTl_R2+RTl_I2)<((double) 2)) && (RTl_n< 512))) {
+      RTl_I = ((((RTl_R+RTl_R))*RTl_I)+RTl_Ci);
+      RTl_R = ((RTl_R2-RTl_I2)+RTl_Cr);
+      RTl_R2 = (RTl_R*RTl_R);
+      RTl_I2 = (RTl_I*RTl_I);
+      RTl_n++;
+    }
+    tempResult = ((double)RTl_n);
+    retVal[_writeoffset] =  tempResult;
+    if (_FAIL) *_FAILRET = _FAIL;
+    return;
+  }
+}
+*/
+
 function WebCLKernel(context, program, kernel)
 {
   this.ctx = context;
   this.program = program;
   this.kernel = kernel;
-  this.dummyArrayBuffer = new Int32Array(64);  // HACK HACK
+  this.dummyArrayBuffer = new Int32Array(1);  // HACK HACK
   this.FAILRET = this.ctx.allocateData(this.dummyArrayBuffer, 16); // HACK HACK
 }
 
-WebCLKernel.prototype.setArgument = function(index, memobj) {
-  DEBUG("kernel.setArgument: index =", index, "arg =", memobj);
-  this.kernel.setKernelArg(index+1, memobj.memobj); // HACK HACK
+WebCLKernel.prototype.setArgument = function(index, webCLBufferWrapper) {
+  //DEBUG("kernel.setArgument: index =", index, "arg =", webCLBufferWrapper);
+  this.kernel.setKernelArg(index+1, webCLBufferWrapper.clBuffer); // HACK HACK
 };
 
 WebCLKernel.prototype.setScalarArgument = function(index, arg, isInteger, highPrecision) {
-  DEBUG("kernel.setScalarArgument: index =", index, "arg =", arg);
+  //DEBUG("kernel.setScalarArgument: index =", index, "arg =", arg);
   var type = isInteger ? WebCL.types.INT :
     (highPrecision ? WebCL.types.DOUBLE : WebCL.types.FLOAT);
   this.kernel.setKernelArg(index+1, arg, type);  // HACK HACK
@@ -118,13 +168,10 @@ WebCLKernel.prototype.setScalarArgument = function(index, arg, isInteger, highPr
 WebCLKernel.prototype.run = function(rank, shape, tile) {
   try {
     var fname = this.kernel.getKernelInfo(WebCL.CL_KERNEL_FUNCTION_NAME);
-    DEBUG("kernel.run: " + fname + "()");
     var prog = this.kernel.getKernelInfo(WebCL.CL_KERNEL_PROGRAM);
-    var src = prog.getProgramInfo(WebCL.CL_PROGRAM_SOURCE);
-    DEBUG("kernel source: ");
-    DEBUG(src);
+    DEBUG("kernel.run(" + fname + ")");
 
-    this.kernel.setKernelArg(0, this.FAILRET.memobj);  // HACK HACK
+    this.kernel.setKernelArg(0, this.FAILRET.clBuffer);  // HACK HACK
 
     this.ctx.q.enqueueNDRangeKernel(this.kernel, rank, [], shape, [], []);
     this.ctx.q.finish();
@@ -138,19 +185,19 @@ WebCLKernel.prototype.run = function(rank, shape, tile) {
 // MemoryObject
 //
 
-function WebCLMemoryObject(context, memory_object, data)
+function WebCLBufferWrapper(clContext, clBuffer, arrayBufferView)
 {
-  this.ctx = context;
-  this.memobj = memory_object;
-  this.data = data;
+  this.ctx = clContext;
+  this.clBuffer = clBuffer;
+  this.arrayBufferView = arrayBufferView;
 }
 
-WebCLMemoryObject.prototype.getValue = function() {
-  DEBUG("WebCLMemoryObject.getValue: this.data.byteLength =", this.data.byteLength);
-  this.ctx.q.enqueueReadBuffer(this.memobj, true, 0, this.data.byteLength, this.data, []);
-  this.memobj.releaseCLResources();
-  this.memobj = undefined;
-  return this.data;
+WebCLBufferWrapper.prototype.getValue = function() {
+  this.ctx.q.enqueueReadBuffer(this.clBuffer, true, 0, this.arrayBufferView.byteLength, this.arrayBufferView, []);
+  this.clBuffer.releaseCLResources();
+  this.clBuffer = undefined;
+  DEBUG("WebCLBufferWrapper.getValue returned " + this.arrayBufferView.byteLength + " bytes", this.arrayBufferView);
+  return this.arrayBufferView;
 };
 
 //

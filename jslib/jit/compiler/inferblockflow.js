@@ -50,12 +50,10 @@ RiverTrail.InferBlockFlow = function () {
     //
     // error reporting
     //
-    function reportError(msg, t) {
-        throw "Error: " + msg + " <" + (t ? RiverTrail.Helper.wrappedPP(t) : "no context") + ">"; // could be more elaborate
-    }
-    function reportBug(msg, t) {
-        throw "Bug: " + msg; // could be more elaborate
-    }
+    var reportError = RiverTrail.Helper.reportError;
+    var reportBug = RiverTrail.Helper.reportBug;
+
+    var findSelectionRoot = RiverTrail.Helper.findSelectionRoot;
 
     // set for remembering identifiers
     var IdSet = function () {
@@ -217,7 +215,9 @@ RiverTrail.InferBlockFlow = function () {
                 locals.union(thenLocals);
                 break;
             case SEMICOLON:
-                infer(ast.expression, ins, outs, locals);
+                if (ast.expression) {
+                    infer(ast.expression, ins, outs, locals);
+                }
                 break;
             case VAR:
             case CONST:
@@ -247,15 +247,17 @@ RiverTrail.InferBlockFlow = function () {
                         infer(ast.children[0], ins, outs, locals);
                         infer(ast.children[1], ins, outs, locals);
                         // a[expr_i] = expr
-                        // today, a needs to be an identifier. We walked through it once, which tags
+                        // today, a needs to be a nested selection. We walked through it once, which tags
                         // it as an IN. Additionally, it now becomes an out. It, however, does not
                         // become a local, as it is not _fully_ locally defined!
-                        locals.union(ast.children[0].value);
-                        outs.union(ast.children[0].value);
+                        outs.union(findSelectionRoot(ast.children[0]).value);
+                        break;
                     case DOT:
                         // not allowed for now as object cannot be mutated :-)
                         // we should never get here.
-                        reportBug("objects may not be mutated!");
+                        //reportBug("objects may not be mutated!");
+                        infer(ast.children[0], ins, outs, locals);
+                        infer(ast.children[1], ins, outs, locals);
                         break;
                     default:
                         reportBug("unhandled lhs in assignment");
@@ -320,12 +322,22 @@ RiverTrail.InferBlockFlow = function () {
             case UNARY_MINUS:
             case BITWISE_NOT:
                 //fallthrough;
-
-            // misc other stuff that just requires a map
+                // misc other stuff that just requires a map
+                ast.children.forEach(function (val) { infer(val, ins, outs, locals); });
+                break;
             case CALL:
+                if(ast.children[0].type === DOT &&
+                        (ast.children[0].children[0].value === "RiverTrailUtils" ||
+                        ast.children[0].children[1].value === "createArray")) {
+                    infer(ast.children[1].children[1], ins, outs, locals);
+                    break;
+                }
+                ast.children.forEach(function (val) { infer(val, ins, outs, locals); });
+                break;
             case LIST:      
             case CAST:
             case TOINT32:
+            case FLATTEN:
             case ARRAY_INIT:
             case INDEX:
                 ast.children.forEach(function (val) { infer(val, ins, outs, locals); });
@@ -379,7 +391,13 @@ RiverTrail.InferBlockFlow = function () {
                 break;
             case NEW:
             case NEW_WITH_ARGS:
+                reportError("general objects not yet implemented", ast);
+                break;
             case OBJECT_INIT:
+                for(var idx = 0; idx < ast.children.length; idx++) {
+                    infer(ast.children[idx].children[1], ins, outs, locals);
+                }
+                break;
             case WITH:
                 reportError("general objects not yet implemented", ast);
                 break;

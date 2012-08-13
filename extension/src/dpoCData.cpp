@@ -27,13 +27,31 @@
 #include "dpoCData.h"
 
 #include "dpo_debug.h"
-#include "jstypedarray.h"
+#include "jsfriendapi.h"
 #include "dpo_debug.h"
 #include "dpo_security_checks_stub.h"
 
 #include "nsIClassInfoImpl.h"
 #include "nsIProgrammingLanguage.h"
+#include "nsServiceManagerUtils.h"
+#include "nsIXPConnect.h"
 
+static nsCOMPtr<nsIXPConnect> __xpc = NULL;
+
+/*
+ * implement our own macros for DPO_PROP_JS_OBJECTS and DPO_HOLD_JS_OBJECTS
+ */
+#define DPO_DROP_JS_OBJECTS(obj, clazz) {                                                                  \
+    if ((__xpc != NULL) || (__xpc = do_GetService(nsIXPConnect::GetCID(), NULL))) {                        \
+        __xpc->RemoveJSHolder(NS_CYCLE_COLLECTION_UPCAST(obj, clazz));                                     \
+    }                                                                                                      \
+}                                                                                                    
+
+#define DPO_HOLD_JS_OBJECTS(obj, clazz) {                                                                  \
+    if ((__xpc != NULL) || (__xpc = do_GetService(nsIXPConnect::GetCID(), NULL))) {                        \
+        __xpc->AddJSHolder(NS_CYCLE_COLLECTION_UPCAST(obj, clazz), &NS_CYCLE_COLLECTION_NAME(clazz));      \
+    }                                                                                                      \
+}
 
 /*
  * Implement ClassInfo support to make this class feel more like a JavaScript class, i.e.,
@@ -43,36 +61,36 @@
  * see https://developer.mozilla.org/en/Using_nsIClassInfo
  */
 NS_IMPL_CLASSINFO( dpoCData, 0, 0, DPO_DATA_CID)
-NS_IMPL_CI_INTERFACE_GETTER2(dpoCData, dpoIData, nsISecurityCheckedComponent)
+NS_IMPL_CI_INTERFACE_GETTER2(dpoCData, dpoIData, nsXPCOMCycleCollectionParticipant)
 
 /* 
  * Implement the hooks for the cycle collector
  */
 NS_IMPL_CYCLE_COLLECTION_CLASS(dpoCData)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(dpoCData)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(parent)
+    NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
+    NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(parent)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(dpoCData)
-if (!JSVAL_IS_VOID(tmp->theArray) && (JSVAL_IS_GCTHING(tmp->theArray))) {
-    void *gcThing = JSVAL_TO_GCTHING(tmp->theArray);
-    NS_IMPL_CYCLE_COLLECTION_TRACE_JS_CALLBACK(gcThing, "theArray")
-  }
+    NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(theArray)
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(dpoCData)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(parent)
-  if (tmp->theArray != JSVAL_VOID) {
-    tmp->theArray = JSVAL_VOID;
-  }
+    NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(parent)
+    if (tmp->theArray) {
+	DEBUG_LOG_STATUS("UNLINK!", "unlinking array " << tmp->theArray);
+        DPO_DROP_JS_OBJECTS(tmp, dpoCData);
+        tmp->theArray = nsnull;
+    }
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(dpoCData)
-  NS_INTERFACE_MAP_ENTRY(dpoIData)
-  NS_INTERFACE_MAP_ENTRY(nsISecurityCheckedComponent)
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, dpoIData)
-  NS_IMPL_QUERY_CLASSINFO(dpoCData)
+    DEBUG_LOG_STATUS("COLLECT!", "entering collection");
+    NS_INTERFACE_MAP_ENTRY(dpoIData)
+    NS_INTERFACE_MAP_ENTRY(nsISecurityCheckedComponent)
+    NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, dpoIData)
+    NS_IMPL_QUERY_CLASSINFO(dpoCData)
 NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(dpoCData)
@@ -86,7 +104,7 @@ dpoCData::dpoCData(dpoIContext *aParent)
 	parent = aParent;
 	queue = NULL;
 	memObj = NULL;
-	theArray = JSVAL_VOID;
+	theArray = nsnull;
 	theContext = NULL;
 #ifdef PREALLOCATE_IN_JS_HEAP
 	mapped = false;
@@ -97,18 +115,61 @@ dpoCData::~dpoCData()
 {
 	DEBUG_LOG_DESTROY("dpoCData", this);
 	if (memObj != NULL) {
+#ifdef INCREMENTAL_MEM_RELEASE
+		DeferFree(memObj);
+#else /* INCREMENTAL_MEM_RELEASE */
 		clReleaseMemObject( memObj);
+#endif /* INCREMENTAL_MEM_RELEASE */
 	}
 	if ((queue != NULL) && retained) {
+        DEBUG_LOG_STATUS("~dpoCData", "releasing queue object");
 		clReleaseCommandQueue( queue);
 	}
-	if (theArray != JSVAL_VOID) {
-		DEBUG_LOG_STATUS("~dpoCData", "wrapper is beeing destroyed but jsval is still alive!");
-		theArray = JSVAL_VOID;
+    if (theArray) {
+        DEBUG_LOG_STATUS("~dpoCData", "releasing array object");
+        DPO_DROP_JS_OBJECTS(this, dpoCData);
+        theArray = nsnull;
+    }
+}
+
+#ifdef INCREMENTAL_MEM_RELEASE
+cl_mem *dpoCData::defer_list = new cl_mem[DEFER_LIST_LENGTH];
+uint dpoCData::defer_pos = 0;
+
+void dpoCData::DeferFree(cl_mem obj) {
+	if (dpoCData::defer_pos >= DEFER_LIST_LENGTH) {
+		clReleaseMemObject(obj);
+	} else {
+		dpoCData::defer_list[dpoCData::defer_pos++] = obj;
 	}
 }
 
-nsresult dpoCData::InitCData(JSContext *cx, cl_command_queue aQueue, cl_mem aMemObj, uint32 aType, uint32 aLength, uint32 aSize, const jsval anArray)
+int dpoCData::CheckFree() {
+	int freed = 0;
+	while ((dpoCData::defer_pos > 0) && (freed++ < DEFER_CHUNK_SIZE)) {
+		clReleaseMemObject(dpoCData::defer_list[--dpoCData::defer_pos]);
+	}
+	return freed;
+}
+#endif /* INCREMENTAL_MEM_RELEASE */
+
+cl_int dpoCData::EnqueueReadBuffer(size_t size, void *ptr) {
+#ifdef INCREMENTAL_MEM_RELEASE
+	cl_int err_code;
+	int freed;
+
+	do {
+		freed = dpoCData::CheckFree();
+		err_code = clEnqueueReadBuffer(queue, memObj, CL_TRUE, 0, size, ptr, 0, NULL, NULL);
+	} while (((err_code == CL_MEM_OBJECT_ALLOCATION_FAILURE) || (err_code == CL_OUT_OF_HOST_MEMORY)) && freed);
+
+	return err_code;
+#else /* INCREMENTAL_MEM_RELEASE */
+	return clEnqueueReadBuffer(queue, memObj, CL_TRUE, 0, size, ptr, 0, NULL, NULL);
+#endif /* INCREMENTAL_MEM_RELEASE */
+}
+
+nsresult dpoCData::InitCData(JSContext *cx, cl_command_queue aQueue, cl_mem aMemObj, uint32 aType, uint32 aLength, uint32 aSize, JSObject *anArray)
 {
 	cl_int err_code;
 
@@ -116,8 +177,15 @@ nsresult dpoCData::InitCData(JSContext *cx, cl_command_queue aQueue, cl_mem aMem
 	length = aLength;
 	size = aSize;
 	memObj = aMemObj;
-	theArray = anArray;
 	theContext = cx;
+
+	if (anArray) {
+		// tell the JS runtime that we hold this typed array
+		DPO_HOLD_JS_OBJECTS(this, dpoCData);
+		theArray = anArray;
+	} else {
+		theArray = nsnull;
+	}
 
 	DEBUG_LOG_STATUS("InitCData", "queue is " << aQueue << " buffer is " << aMemObj);
 
@@ -143,11 +211,10 @@ NS_IMETHODIMP dpoCData::GetValue(JSContext *cx, jsval *aValue)
 	void *mem;
 #endif /* PREALLOCATE_IN_JS_HEAP */
 
-	if (theArray != JSVAL_VOID) {
+	if (theArray) {
 #ifdef PREALLOCATE_IN_JS_HEAP
 		if (!mapped) {
-			JSObject *jsArray;
-
+			DEBUG_LOG_STATUS("GetValue", "memory is " << theArray);
 			void *mem = clEnqueueMapBuffer(queue, memObj, CL_TRUE, CL_MAP_READ, 0, size, 0, NULL, NULL, &err_code);
 
 			if (err_code != CL_SUCCESS) {
@@ -155,47 +222,54 @@ NS_IMETHODIMP dpoCData::GetValue(JSContext *cx, jsval *aValue)
 				return NS_ERROR_NOT_AVAILABLE;
 			}
 #ifndef DEBUG_OFF
-			jsArray = JSVAL_TO_OBJECT(theArray);
-			if (js_IsTypedArray(jsArray)) {
+			if (!js_IsTypedArray(theArray)) {
 				DEBUG_LOG_STATUS("GetValue", "Cannot access typed array");
 				return NS_ERROR_NOT_AVAILABLE;
 			}
 
-			if (mem != JS_GetTypedArrayData(jsArray)) {
+			if (mem != JS_GetTypedArrayData(theArray)) {
 				DEBUG_LOG_STATUS("GetValue", "EnqueueMap returned wrong pointer");
 			}
 #endif /* DEBUG_OFF */
 			mapped = true;
 		}
 #endif /* PREALLOCATE_IN_JS_HEAP */
-		*aValue = theArray;
+		*aValue = OBJECT_TO_JSVAL(theArray);
 		return NS_OK;
 	} else {
-		JSObject *jsArray;
-	
-		if (!JS_EnterLocalRootScope(cx)) {
-			DEBUG_LOG_STATUS("GetValue", "Cannot root local scope");
-			return NS_ERROR_NOT_AVAILABLE;
+        	// tell the runtime that we cache this array object
+		DPO_HOLD_JS_OBJECTS(this, dpoCData);
+
+		switch (type) {
+		case js::ArrayBufferView::TYPE_FLOAT64:
+			theArray = JS_NewFloat64Array(cx, length);
+			break;
+		case js::ArrayBufferView::TYPE_FLOAT32:
+			theArray = JS_NewFloat32Array(cx, length);
+			break;
+		default:
+			/* we only return float our double arrays, so fail in all other cases */
+			return NS_ERROR_NOT_IMPLEMENTED;
 		}
-		jsArray = js_CreateTypedArray(cx, type, length);
-		if (!jsArray) {
+
+		if (!theArray) {
 			DEBUG_LOG_STATUS("GetValue", "Cannot create typed array");
 			return NS_ERROR_OUT_OF_MEMORY;
 		}
 
-		err_code = clEnqueueReadBuffer(queue, memObj, CL_TRUE, 0, size, JS_GetTypedArrayData(jsArray), 0, NULL, NULL);
+#ifdef INCREMENTAL_MEM_RELEASE
+		dpoCData::CheckFree();
+#endif /* INCREMENTAL_MEM_RELEASE */
+
+		err_code = EnqueueReadBuffer(size, JS_GetArrayBufferViewData(theArray, cx));
 		if (err_code != CL_SUCCESS) {
 			DEBUG_LOG_ERROR("GetValue", err_code);
 			return NS_ERROR_NOT_AVAILABLE;
 		}
 
-		theArray = OBJECT_TO_JSVAL(jsArray);
+		*aValue = OBJECT_TO_JSVAL(theArray);
 	
-		*aValue = theArray;
-
 		DEBUG_LOG_STATUS("GetValue", "materialized typed array");
-
-		JS_LeaveLocalRootScope(cx);
 
 		return NS_OK;
 	}
@@ -207,21 +281,21 @@ NS_IMETHODIMP dpoCData::WriteTo(const jsval & dest, JSContext *cx)
 	JSObject *destArray;
 	cl_int err_code;
 	
-	if (!JSVAL_IS_OBJECT( dest)) {
+	if (JSVAL_IS_PRIMITIVE( dest)) {
 		return NS_ERROR_INVALID_ARG;
 	}
 
 	destArray = JSVAL_TO_OBJECT(dest);
 
-	if (!js_IsTypedArray( destArray)) {
+	if (!JS_IsTypedArrayObject(destArray, cx)) {
 		return NS_ERROR_CANNOT_CONVERT_DATA;
 	}
 
-	if ((JS_GetTypedArrayType(destArray) != type) || (JS_GetTypedArrayLength(destArray) != length)) {
+	if ((JS_GetTypedArrayType(destArray, cx) != type) || (JS_GetTypedArrayLength(destArray, cx) != length)) {
 		return NS_ERROR_INVALID_ARG;
 	}
 
-	err_code = clEnqueueReadBuffer(queue, memObj, CL_TRUE, 0, size, JS_GetTypedArrayData(destArray), 0, NULL, NULL);
+	err_code = EnqueueReadBuffer(size, JS_GetArrayBufferViewData(destArray, cx));
 	if (err_code != CL_SUCCESS) {
 		DEBUG_LOG_ERROR("WriteTo", err_code);
 		return NS_ERROR_NOT_AVAILABLE;

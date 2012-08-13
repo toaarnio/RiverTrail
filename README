@@ -1,1 +1,3 @@
-A ParallelArray abstraction for JavaScript and a Firefox add-on to enable parallel programming in JavaScript targeting multi-core CPUs and vector SSE/AVX instructions.
+Adaptation of Intel's parallel JavaScript framework (RiverTrail) to
+make it run on top of WebCL rather than Intel's proprietary OpenCL
+bindings.
